@@ -28,8 +28,9 @@
 usage () {
   cat <<EOF
 Usage:
-  $0 MODULE [FILTER ..]
+  $0 [-v] MODULE [FILTER ..]
 
+  -v        verbose output
   MODULE    module name (e.g. "core")
   FILTER    optional filter path(s)
 
@@ -51,6 +52,11 @@ Examples:
   # profile some of Cougaar planning,
   # create new \$CIP/lib/planning.jar
   $0 planning org/cougaar/planning/ldm org/cougaar/planning/plugin
+
+  # profile everything!
+  for x in io net util rmi; do $0 java${x}patch; done
+  for x in \$CIP/lib/*.jar; do $0 $x; done
+  for x in \$CIP/sys/*.jar; do $0 $x; done
 EOF
 }
 
@@ -59,13 +65,25 @@ if [ -z $1 ] || [ $1 = --help ]; then
   exit -1
 fi
 
+VERBOSE=
+if [ $1 = -v ]; then
+  VERBOSE=1
+  shift 1
+fi
+
 MODULE=$1
 shift 1
 FILTERS=$*
 
-VERBOSE=
+if [ -z $CIP ]; then
+  CIP=$COUGAAR_INSTALL_PATH
+fi
+if [ -z $CIP ]; then
+  echo "\$COUGAAR_INSTALL_PATH not set"
+  exit -1
+fi
 
-CIP=$COUGAAR_INSTALL_PATH
+TMP=$CIP/tmp
 
 BCEL=$CIP/sys/bcel.jar
 
@@ -73,120 +91,166 @@ DEPENDENCY_FILE="$CIP/build/data/default.build"
 
 SIGN_SCRIPT="$CIP/operator/sign"
 
-if [ -z $CIP ]; then
-  CIP=../
+if [ ! -d $TMP ]; then
+  mkdir $TMP || exit -1
 fi
-if [ ! -d $CIP ]; then
-  Update the $0 script\'s \$CIP variable
-  exit -1
-fi
-export COUGAAR_INSTALL_PATH=$CIP
 
 if [ ! -f $BCEL ]; then
   echo "BCEL-5.1 jar not found: $BCEL"
+  echo "See http://jakarta.apache.org/bcel"
   exit -1
 fi
 
-restore_jars () {
-  FROM=$CIP/lib/$MODULE.jar
-  if [ -L $FROM ]; then
-    if [ -f $CIP/lib/$MODULE.jar.old ]; then
-      # restore backup
-      rm $FROM || exit -1
-      if [ -f $CIP/lib/$MODULE.jar.new ]; then
-        rm $CIP/lib/$MODULE.jar.new || exit -1
-      fi
-      ln -s $CIP/lib/$MODULE.jar.old $FROM || exit -1
+get_dir () {
+  NAME=$2
+
+  if [ -z $NAME ]; then
+    if [ -e $CIP/lib/$MODULE.jar ]; then
+      RET=$CIP/lib
+    elif [ -e $CIP/sys/$MODULE.jar ]; then
+      RET=$CIP/sys
+    else
+      echo "Unable to find $MODULE"
+      exit -1
     fi
-  elif [ -f $FROM ]; then
+  else
+    # jdk patch
+    RET=$CIP/lib
+  fi
+
+  eval "$1=\"$RET\""
+}
+
+restore_jars () {
+  LINK=$DIR/$MODULE.jar
+  OLD=$LINK.old
+  NEW=$LINK.new
+  if [ -L $LINK ]; then
+    if [ -f $OLD ]; then
+      # restore backup
+      rm $LINK || exit -1
+      if [ -f $NEW ]; then
+        rm $NEW || exit -1
+      fi
+      ln -s $OLD $LINK || exit -1
+    fi
+  elif [ -f $LINK ]; then
     # make backup
-    mv $FROM $CIP/lib/$MODULE.jar.old || exit -1
-    ln -s $CIP/lib/$MODULE.jar.old $FROM || exit -1
+    mv $LINK $OLD || exit -1
+    ln -s $OLD $LINK || exit -1
   fi
 }
 
-commit_jars () {
+create_jars () {
+  echo "  jaring"
+
+  NEW=$DIR/$MODULE.jar.new
+
+  cd new/old/classes || exit -1
+  jar cf $NEW * || exit -1
+
   # sign the jar
   if [ -x $SIGN_SCRIPT ]; then
     echo "  signing new $MODULE.jar"
-    $SIGN_SCRIPT $CIP/lib/$MODULE.jar.new || exit -1
+    $SIGN_SCRIPT $NEW || exit -1
   fi
 
   # create link to our new jar
-  if [ -L $CIP/lib/$MODULE.jar ]; then
-    rm $CIP/lib/$MODULE.jar || exit -1
+  LINK=$DIR/$MODULE.jar
+  if [ -L $LINK ]; then
+    rm $LINK || exit -1
   fi
-  if [ ! -f $CIP/lib/$MODULE.jar ]; then
-    ln -s $CIP/lib/$MODULE.jar.new $CIP/lib/$MODULE.jar || exit -1
+  if [ ! -f $LINK ]; then
+    ln -s $NEW $LINK || exit -1
   fi
 }
 
 prepare_jdk () {
   NAME=$1
 
-  echo "transforming $MODULE"
-
-  restore_jars
   FROM=$JAVA_HOME/jre/lib/rt.jar
 
-  if [ ! -d $CIP/$MODULE/old/classes ]; then
-    echo "  creating $MODULE"
+  if [ -d $TMP/$MODULE/old/classes ]; then
+    echo "  already unzipped"
+    return
+  fi
 
-    # figure out overlay
-    OVERLAY=
-    if [ $NAME = io ]; then
-      # include Cougaar's custom javaiopatch overlay
-      if [ -f $CIP/lib/$MODULE.jar.old ]; then
-        OVERLAY=$CIP/lib/$MODULE.jar.old
-      elif [ -f $CIP/lib/$MODULE.jar ]; then
-        OVERLAY=$CIP/lib/$MODULE.jar
-      fi
-    fi
+  echo "  unzipping"
 
-    # unzip classes to be transformed ("old")
-    cd $CIP || exit -1
-    mkdir -p $MODULE/old/classes || exit -1
-    cd $MODULE/old/classes || exit -1
-    unzip -q $FROM $FILTERS || exit -1
-    find . -type d -exec chmod 777 {} \; || exit -1
-    if [ ! -z $OVERLAY ]; then
-      unzip -q -o $OVERLAY "java/$NAME/*" || exit -1
+  # figure out overlay
+  OVERLAY=
+  if [ $NAME = io ]; then
+    # include Cougaar's custom javaiopatch overlay
+    if [ -f $DIR/$MODULE.jar.old ]; then
+      OVERLAY=$DIR/$MODULE.jar.old
+    elif [ -f $DIR/$MODULE.jar ]; then
+      OVERLAY=$DIR/$MODULE.jar
     fi
+  fi
 
-    # unzip the rest ("new")
-    cd $CIP || exit -1
-    mkdir -p $MODULE/new/old/classes || exit -1
-    cd $MODULE/new/old/classes || exit -1
-    unzip -q $FROM "java/$NAME/*" || exit -1
-    find . -type d -exec chmod 777 {} \; || exit -1
-    if [ ! -z $OVERLAY ]; then
-      unzip -q -o $OVERLAY "java/$NAME/*" || exit -1
-    fi
+  # unzip classes to be transformed ("old")
+  cd $TMP || exit -1
+  mkdir -p $MODULE/old/classes || exit -1
+  cd $MODULE/old/classes || exit -1
+  unzip -q $FROM $FILTERS || exit -1
+  find . -type d -exec chmod 777 {} \; || exit -1
+  if [ ! -z $OVERLAY ]; then
+    unzip -q -o $OVERLAY "java/$NAME/*" || exit -1
+  fi
+
+  # unzip the rest ("new")
+  cd $TMP || exit -1
+  mkdir -p $MODULE/new/old/classes || exit -1
+  cd $MODULE/new/old/classes || exit -1
+  unzip -q $FROM "java/$NAME/*" || exit -1
+  find . -type d -exec chmod 777 {} \; || exit -1
+  if [ ! -z $OVERLAY ]; then
+    unzip -q -o $OVERLAY "java/$NAME/*" || exit -1
   fi
 }
 
 prepare_cougaar () {
-  echo "transforming $MODULE"
-  cd $CIP || exit -1
+  FROM=$DIR/$MODULE.jar
+  if [ -e $DIR/$MODULE.jar.old ]; then
+    FROM=$DIR/$MODULE.jar.old
+  fi
 
-  restore_jars
-  FROM=$CIP/lib/$MODULE.jar
+  if [ -d $TMP/$MODULE/old/classes ]; then
+    echo "  already unzipped"
+    return
+  fi
 
-  if [ ! -d $CIP/$MODULE/old/classes ]; then
-    echo "  creating $MODULE"
+  echo "  unzipping"
 
-    # unzip classes to be transformed ("old")
-    mkdir -p $MODULE/old/classes || exit -1
-    cd $MODULE/old/classes || exit -1
-    unzip -q $FROM $FILTERS || exit -1
-    find . -type d -exec chmod 777 {} \; || exit -1
+  # unzip classes to be transformed ("old")
+  cd $TMP || exit -1
+  mkdir -p $MODULE/old/classes || exit -1
+  cd $MODULE/old/classes || exit -1
+  unzip -q $FROM $FILTERS || exit -1
+  find . -type d -exec chmod 777 {} \; || exit -1
 
-    # unzip the rest ("new")
-    mkdir -p $MODULE/new/old/classes || exit -1
-    if [ ! -z $FILTERS ]; then
-      cd $MODULE/new/old/classes || exit -1
-      unzip -q $FROM "java/$NAME/*" || exit -1
-      find . -type d -exec chmod 777 {} \; || exit -1
+  # unzip the rest ("new")
+  #
+  # do this even if $FILTERS is empty, since the jar may contain
+  # required "resource bundle" files
+  cd $TMP || exit -1
+  mkdir -p $MODULE/new/old/classes || exit -1
+  cd $MODULE/new/old/classes || exit -1
+  unzip -q $FROM || exit -1
+  find . -type d -exec chmod 777 {} \; || exit -1
+
+  # remove the jar signatures, since we're changing the classes
+  #
+  # our $SIGN_SCRIPT will re-sign the jar
+  if [ -d META-INF ]; then
+    cd META-INF || exit -1
+    rm -f MANIFEST.MF PRIVILEG.DSA PRIVILEG.SF || exit -1
+    if [ $MODULE = bootstrap ]; then
+      rm -f BOOTSTRA.DSA BOOTSTRA.SF || exit -1
+    fi
+    if [ `ls -lA1 | wc -l` -eq 0 ]; then
+      cd .. || exit -1
+      rmdir META-INF || exit -1
     fi
   fi
 }
@@ -198,21 +262,22 @@ Unable to find build "classpath" dependency file:
   $DEPENDENCY_FILE
 
 For example, if we're transforming:
-  $CIP/lib/foo.jar
-and "foo" has compile dependencies upon:
-  lib/a.jar
-  lib/b.jar
-  lib/c.jar
-  sys/x.jar
-  sys/y.jar
+  \$CIP/lib/core.jar
+and "core" has compile dependencies upon:
+  lib/bootstrap.jar
+  lib/util.jar
+  sys/log4j.jar
+  sys/servlet.jar
+  sys/concurrent.jar
 then dependency file should contain:
-  foo.deps = a,b,c
-  foo.jars = x,y
+  core.deps = bootstrap, util
+  core.jars = log4j, servlet, concurrent
 which is parsed into:
   LIB=\
-    $CIP/lib/a.jar:$CIP/lib/b.jar:$CIP/lib/c.jar:\
-    $CIP/sys/x.jar:$CIP/sys/y.jar
-  javac ... -classpath $LIB:<etc> ...
+    \$CIP/lib/bootstrap.jar:\$CIP/lib/util.jar:\
+    \$CIP/sys/log4j.jar:\$CIP/sys/servlet.jar:\
+    \$CIP/sys/concurrent.jar
+  javac ... -classpath \$LIB:<etc> ...
 EOF
     exit -1
   fi
@@ -226,28 +291,40 @@ EOF
 }
 
 get_classpath () {
+  # RFE: couldn't we just use the bootstrapper?
+
   # get jar dependencies from "default.build"
   get_dependency SEPLIB "${MODULE}\.deps"
   get_dependency SEPSYS "${MODULE}\.jars"
 
-  LIBDEP="$CIP/lib/$MODULE.jar"
+  if [ -z "$SEPLIB" ] && [ -z "$SEPSYS" ]; then
+    echo "  zero dependencies: $DEPENDENCY_FILE"
+  fi
+
+  LIBDEP=""
   for x in $SEPLIB; do
-    if [ ! -f $CIP/lib/$x.jar ]; then
-      echo Missing $CIP/lib/$x.jar required for module $MODULE
-      exit -1
+    if [ -f $CIP/lib/$x.jar ]; then
+      LIBDEP="$LIBDEP:$CIP/lib/$x.jar"
+    else
+      echo "  missing dependency: $CIP/lib/$x.jar"
     fi
-    LIBDEP="$LIBDEP:$CIP/lib/$x.jar"
   done
   SYSDEP="$CIP/lib/javaiopatch.jar"
   for x in $SEPSYS; do
-    if [ ! -f $CIP/sys/$x.jar ]; then
-      echo Missing $CIP/sys/$x.jar required for module $MODULE
-      exit -1
+    if [ -f $CIP/sys/$x.jar ]; then
+      SYSDEP="$SYSDEP:$CIP/sys/$x.jar"
+    else
+      echo "  missing dependency: $CIP/sys/$x.jar"
     fi
-    SYSDEP="$SYSDEP:$CIP/sys/$x.jar"
   done
 
-  RET="$LIBDEP:$SYSDEP"
+  RET="$DIR/$MODULE.jar"
+  if [ ! -z $LIBDEP ]; then
+    RET="$RET:$LIBDEP"
+  fi
+  if [ ! -z $SYSDEP ]; then
+    RET="$RET:$SYSDEP"
+  fi
 
   eval "$1=\"$RET\""
 }
@@ -255,12 +332,14 @@ get_classpath () {
 transform () {
   LIB=$1
 
+  echo "  instrumenting"
+
   CP="$BCEL:$CIP/lib/profiler_transform.jar:$CIP/lib/profiler_impl.jar"
   if [ ! -z $LIB ]; then
     CP="$CP:$LIB"
   fi
 
-  cd $CIP/$MODULE || exit -1
+  cd $TMP/$MODULE || exit -1
   COMMAND="java \
     -classpath $CP\
     org.cougaar.profiler.transform.ProfileAll\
@@ -270,33 +349,56 @@ transform () {
   fi
   $COMMAND || exit -1
   if [ ! -d new/old/classes ]; then
-    echo "Transform $MODULE failed, missing $CIP/new/old/classes"
+    echo "Transform $MODULE failed, missing $TMP/new/old/classes"
     exit -1
   fi
-  cd new/old/classes || exit -1
-  jar cf $CIP/lib/$MODULE.jar.new * || exit -1
-
-  commit_jars
 }
 
 transform_jdk () {
   NAME=$1
 
+  if [ $NAME = lang ]; then
+    echo "Unable to profile \"java.lang\""
+    exit -1
+  fi
+
   if [ -z $FILTERS ]; then
     FILTERS="java/${NAME}/*"
   fi
+
+  restore_jars
   prepare_jdk $NAME
   transform
+  create_jars
 }
 
 transform_cougaar () {
+  restore_jars
   prepare_cougaar
   get_classpath LIB
   transform $LIB
+  create_jars
 }
+
+# parse "[/foo/]${MODULE}[.jar]"
+BASE=`echo $MODULE | perl -ne 'print $2 if (/^(.*\/)?([^\/]*)(\.jar)$/)'`
+if [ ! -z $BASE ]; then
+  MODULE=$BASE
+fi
+
+if [ $MODULE = profiler_impl ] ||
+  [ $MODULE = profiler_transform ] ||
+  [ $MODULE = bootstrap ]; then
+  echo "skipping $MODULE"
+  exit 0
+fi
+
+echo "transforming $MODULE"
 
 # parse "java${NAME}patch"
 NAME=`echo $MODULE | perl -ne 'print $1 if (/^java(.*)patch$/)'`
+
+get_dir DIR $NAME
 
 if [ -z $NAME ]; then
   transform_cougaar

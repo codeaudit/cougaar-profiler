@@ -114,6 +114,7 @@ public class AddProfiler {
    *   }
    *   public interface Capacity {
    *     public int $get_capacity();
+   *     public int $get_capacity_bytes();
    *   }
    * </pre>
    */
@@ -139,24 +140,34 @@ public class AddProfiler {
    *       Object[] buf = elementData;
    *       return (buf == null ? 0 : buf.length);
    *     }..
+   *     public int $get_capacity_bytes() {
+   *       Object[] buf = elementData;
+   *       return (buf == null ? 0 : 12+4*buf.length);
+   *     }..
    *   }
    * <pre>
-   * This is generalized for any class.  The "$get_size" method
-   * is added if there's an int field named:<pre>
+   * This is generalized for any class.  The "$get_size" method is
+   * added if there's an int field named:<pre>
    *   size / elementCount / count
-   * </pre>  The "$get_capacity" method is added if the class
-   * or its parents contain non-static arrays.
+   * </pre>  The "$get_capacity" method is added if the class or its
+   * parents contain non-static arrays.  "$get_capacity_bytes"
+   * multiplies each array by its element byte size and adds the
+   * array header size.
    */
   // RFE: maybe make this a command-line option
   private static final boolean ENABLE_SIZE_AND_CAPACITY = true;
   private static final String SIZE_METHOD =
     "$get_size";
-  private static final String CAPACITY_METHOD =
-    "$get_capacity";
+  private static final String CAPACITY_COUNT_METHOD =
+    "$get_capacity_count";
+  private static final String CAPACITY_BYTES_METHOD =
+    "$get_capacity_bytes";
   private static final String SIZE_CLASS =
     "org.cougaar.profiler.Size";
   private static final String CAPACITY_CLASS =
     "org.cougaar.profiler.Capacity";
+
+  // RFE: convert "newarray" to "org.cougaar.profiler.Arrays"?
 
   /**
    * The name of our static profiler field and profiling
@@ -436,7 +447,7 @@ public class AddProfiler {
 
   private int computeSize() {
     // minimally costs an object header
-    int words = 2;
+    int bytes = 8;
     int i = -1;
     int n = supers.length - 1;
     Field[] fields = cg.getFields();
@@ -450,14 +461,14 @@ public class AddProfiler {
         // by words as necessary but always within class/subclass
         // boundaries.  Here we simply assume that doubles and longs
         // cost 2 words and everything else costs 1
-        words += f.getType().getSize();
+        int words =  f.getType().getSize();
+        bytes += (words << 2);
       }
       if (++i >= n) {
         break;
       }
       fields = supers[i].getFields();
     }
-    int bytes = (words << 2);
     return bytes;
   }
 
@@ -594,13 +605,20 @@ public class AddProfiler {
 
   private void defineCapacity() {
     has_capacity = false;
+    boolean has_capacity_count = false;
+    boolean has_capacity_bytes = false;
+
     // look for custom "$get_capacity()"
     Method[] methods = cg.getMethods();
     for (int i = 0; i < methods.length; i++) {
       Method m = methods[i];
       String name = m.getName();
       // check name
-      if (!CAPACITY_METHOD.equals(name)) {
+      if (CAPACITY_COUNT_METHOD.equals(name)) {
+        has_capacity_count = true;
+      } else if (CAPACITY_BYTES_METHOD.equals(name)) {
+        has_capacity_bytes = true;
+      } else {
         continue;
       }
       // check method signature
@@ -608,23 +626,27 @@ public class AddProfiler {
           (!m.getReturnType().equals(Type.INT)) ||
           (m.getArgumentTypes().length != 0)) {
         System.err.println(
-            "Invalid \"public int "+CAPACITY_METHOD+
+            "Invalid \"public int "+name+
             "()\" signature: "+m);
         return;
       }
+    }
+    if (has_capacity_count && has_capacity_bytes) {
       // add "Capacity" interface
-      cg.addInterface(CAPACITY_CLASS);
       has_capacity = true;
+      cg.addInterface(CAPACITY_CLASS);
       return;
     }
+
     // look for non-static array fields
     //
-    // we can't rely upon parent classes implementing "$get_size()",
-    // since they may disabled at runtime.  Here we add our method
-    // if we contain any arrays, otherwise we let our parent classes
-    // handle it.  The risk is that our parent will have a private
-    // arrand *and* this class has arrays, in which case we'd miss
-    // the parent's array, but in practice this rarely occurs.
+    // we can't rely upon parent classes implementing
+    // "$get_capacity()", since they may disabled at runtime.  Here
+    // we add our method if we contain any arrays, otherwise we let
+    // our parent classes handle it.  The risk is that our parent
+    // will have a private array *and* this class has arrays, in
+    // which case we'd miss the parent's array, but in practice this
+    // rarely occurs.
     int i = -1;
     int n = supers.length - 1;
     Field[] fields = cg.getFields();
@@ -654,17 +676,31 @@ public class AddProfiler {
     if (arrays == null) {
       return;
     }
-    has_capacity = true;
+
     // add "Capacity" interface
+    has_capacity = true;
     cg.addInterface(CAPACITY_CLASS);
+    if (!has_capacity_count) {
+      writeCapacity(arrays, false);
+    }
+    if (!has_capacity_bytes) {
+      writeCapacity(arrays, true);
+    }
+  }
+  private void writeCapacity(List arrays, boolean bytes) {
     // add new method:
-    //   public int $get_capacity() {
+    //   public int $get_capacity[_bytes]() {
     //     int ret = 0;
     //     foreach (arrays) {
-    //       ?[] tmp = field;
-    //       if (tmp != null) {
-    //         ret += tmp.length;
+    //       type[] a = field;
+    //       if (a == null) {
+    //         continue; 
+    //       } 
+    //       int tmp = a.length; 
+    //       if (_bytes) {
+    //         tmp = 12 + len*sizeof(type);
     //       }
+    //       ret += tmp;
     //     }
     //     return ret;
     //   }
@@ -675,7 +711,7 @@ public class AddProfiler {
         Type.INT,
         Type.NO_ARGS,
         new String[] {},
-        CAPACITY_METHOD,
+        (bytes ? CAPACITY_BYTES_METHOD : CAPACITY_COUNT_METHOD),
         class_name,
         il,
         cp);
@@ -701,6 +737,32 @@ public class AddProfiler {
       il.append(ifnull);
       il.append(factory.createLoad(Type.OBJECT, 1));
       il.append(InstructionConstants.ARRAYLENGTH);
+      if (bytes) {
+        int sz;
+        // ignore alignment and bit-packing issues
+        switch (f.getType().getType()) {
+          case Constants.T_BOOLEAN:
+          case Constants.T_BYTE:
+            sz = 1; break;
+          case Constants.T_CHAR:
+          case Constants.T_SHORT:
+            sz = 2; break;
+          case Constants.T_INT:
+          case Constants.T_FLOAT:
+          case Constants.T_OBJECT:
+          default:
+            sz = 4; break;
+          case Constants.T_DOUBLE:
+          case Constants.T_LONG:
+            sz = 8; break;
+        }
+        if (sz != 1) {
+          il.append(new PUSH(cp, sz));
+          il.append(InstructionConstants.IMUL);
+        }
+        il.append(new PUSH(cp, 12));
+        il.append(InstructionConstants.IADD);
+      }
       il.append(InstructionConstants.IADD);
     }
     InstructionHandle ret_int =
@@ -860,8 +922,31 @@ public class AddProfiler {
   private void addClassProfiler() {
     // add:
     //   protected void $profile_Bar() {
-    //     $PROFILER_Bar.add(this);
+    //     if ($PROFILER_Bar != null) {
+    //       $PROFILER_Bar.add(this);
+    //     }
     //   }
+    //
+    // The $PROFILER_Bar field is almost always non-null, since it's
+    // the first field set in <clinit>.  However, the parent class
+    // may have a static reference in its <clinit>, which will
+    // construct an instance *before* our class's <clinit>!
+    //
+    // Here's an example based upon log4j-1.2.7:
+    //   public class Logger { 
+    //     public static void main(String[] args) {
+    //       System.out.println(Level.class);
+    //     }
+    //     static class Priority {
+    //       static final Level FATAL = new Level();
+    //     }
+    //     static class Level {
+    //       static final Level INFO = new Level();
+    //       public Level() { System.out.println("INFO: "+INFO); }
+    //     }
+    //   }
+    // This will print "INFO: null" and the Level classname.
+    // Our profiler field would also be null.
     InstructionList il = new InstructionList();
     MethodGen method =
       new MethodGen(
@@ -879,6 +964,12 @@ public class AddProfiler {
           PROFILER_FIELD_PREFIX+safe_class_name,
           new ObjectType(MEMORY_TRACKER_CLASS),
           Constants.GETSTATIC));
+    il.append(factory.createDup(1));
+    il.append(factory.createStore(Type.OBJECT, 1));
+    BranchInstruction ifnull =
+      factory.createBranchInstruction(Constants.IFNULL, null);
+    il.append(ifnull);
+    il.append(factory.createLoad(Type.OBJECT, 1));
     il.append(factory.createLoad(Type.OBJECT, 0));
     il.append(factory.createInvoke(
           MEMORY_TRACKER_CLASS,
@@ -886,7 +977,9 @@ public class AddProfiler {
           Type.VOID,
           new Type[] { Type.OBJECT },
           Constants.INVOKEVIRTUAL));
-    il.append(factory.createReturn(Type.VOID));
+    InstructionHandle ret =
+      il.append(factory.createReturn(Type.VOID));
+    ifnull.setTarget(ret);
     method.setMaxStack();
     method.setMaxLocals();
     cg.addMethod(method.getMethod());
@@ -1038,6 +1131,12 @@ public class AddProfiler {
     }
     if (clone_method == null) {
       newClone();
+    } else if (
+        (clone_method.getAccessFlags() &
+         Constants.ACC_ABSTRACT) != 0) {
+      // abstract "clone()" method, even though Object defines
+      // a non-abstract impl.  This is valid to force subclass
+      // override of the default impl.
     } else {
       updateClone(clone_method);
     }

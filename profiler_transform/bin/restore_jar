@@ -32,8 +32,9 @@
 usage () {
   cat <<EOF
 Usage:
-  $0 MODULE
+  $0 [-v] MODULE
 
+  -v        verbose
   MODULE    module name (e.g. "core")
 
 Reverts the output of "transform_jar".
@@ -57,45 +58,101 @@ if [ -z $1 ] || [ $1 = --help ]; then
   exit -1
 fi
 
+VERBOSE=
+if [ $1 = -v ]; then
+  VERBOSE=1
+  shift 1
+fi
+
 MODULE=$1
 
-VERBOSE=
-
-CIP=$COUGAAR_INSTALL_PATH
-
 if [ -z $CIP ]; then
-  CIP=../
+  CIP=$COUGAAR_INSTALL_PATH
 fi
-if [ ! -d $CIP ]; then
-  Update the $0 script\'s \$CIP variable
+if [ -z $CIP ]; then
+  echo "\$COUGAAR_INSTALL_PATH not set"
   exit -1
 fi
-export COUGAAR_INSTALL_PATH=$CIP
+
+get_dir () {
+  NAME=$2
+
+  if [ -z $NAME ]; then
+    if [ -e $CIP/lib/$MODULE.jar ]; then
+      RET=$CIP/lib
+    elif [ -e $CIP/sys/$MODULE.jar ]; then
+      RET=$CIP/sys
+    else
+      echo "unable to find $MODULE"
+      exit -1
+    fi
+  else
+    # jdk patch
+    RET=$CIP/lib
+  fi
+
+  eval "$1=\"$RET\""
+}
 
 restore_jars () {
-  FROM=$CIP/lib/$MODULE.jar
-  if [ -L $FROM ]; then
-    if [ -f $CIP/lib/$MODULE.jar.old ]; then
-      # restore backup
-      rm $FROM || exit -1
-      if [ -f $CIP/lib/$MODULE.jar.new ]; then
-        rm $CIP/lib/$MODULE.jar.new || exit -1
+  LINK=$DIR/$MODULE.jar
+  OLD=$LINK.old
+  NEW=$LINK.new
+  # restore backup
+  if [ -L $LINK ]; then
+    if [ -f $OLD ]; then
+      if [ ! -z $VERBOSE ]; then
+        echo "rm $LINK"
       fi
-      ln -s $CIP/lib/$MODULE.jar.old $FROM || exit -1
+      rm $LINK || exit -1
+      if [ -f $NEW ]; then
+        if [ ! -z $VERBOSE ]; then
+          echo "rm $NEW"
+        fi
+        rm $NEW || exit -1
+      fi
+      if [ ! -z $VERBOSE ]; then
+        echo "mv $OLD $LINK"
+      fi
+      mv $OLD $LINK || exit -1
     fi
-  elif [ -f $FROM ]; then
-    # make backup
-    mv $FROM $CIP/lib/$MODULE.jar.old || exit -1
-    ln -s $CIP/lib/$MODULE.jar.old $FROM || exit -1
+  fi
+  # remove temporary directories (optional)
+  TMP=$CIP/tmp/$MODULE
+  if [ -d $TMP ]; then
+    RM_OLD=`if [ -d $TMP/old ]; then echo $TMP/old; fi`
+    RM_NEW=`if [ -d $TMP/new ]; then echo $TMP/new; fi`
+    if [ ! -z $RM_OLD ] || [ ! -z $RM_NEW ]; then
+      if [ `ls -1 $TMP | wc -l`\
+        -eq\
+        `echo $RM_OLD $RM_NEW | wc -w` ]; then
+        if [ ! -z $VERBOSE ]; then
+          echo "rm -rf $TMP"
+        fi
+        rm -rf $TMP || exit -1
+      else
+        if [ ! -z $VERBOSE ]; then
+          echo "rm -rf $RM_OLD $RM_NEW"
+        fi
+        rm -rf $RM_OLD $RM_NEW || exit -1
+      fi
+    fi
   fi
 }
 
+# parse "[/foo/]${MODULE}[.jar]"
+BASE=`echo $MODULE | perl -ne 'print $2 if (/^(.*\/)?([^\/]*)(\.jar)$/)'`
+if [ ! -z $BASE ]; then
+  MODULE=$BASE
+fi
+
+if [ $MODULE = profiler_impl ]; then
+  echo "skipping $MODULE"
+  exit 0
+fi
+
+NAME=`echo $MODULE | perl -ne 'print $1 if (/^java(.*)patch$/)'`
+
+get_dir DIR $NAME
+
 restore_jars
-
-cat <<EOF
-Removed \$CIP/lib/$MODULE.jar.new
-Linked \$CIP/lib/$MODULE.jar.old -> \$CIP/lib/$MODULE.jar
-
-Also consider removing the temporary directories:
-  rm -rf \$CIP/$MODULE/old \$CIP/$MODULE/new
-EOF
