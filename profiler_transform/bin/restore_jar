@@ -1,0 +1,101 @@
+#!/bin/sh
+
+# <copyright>
+#  Copyright 2001-2003 BBNT Solutions, LLC
+#  under sponsorship of the Defense Advanced Research Projects Agency (DARPA).
+# 
+#  This program is free software; you can redistribute it and/or modify
+#  it under the terms of the Cougaar Open Source License as published by
+#  DARPA on the Cougaar Open Source Website (www.cougaar.org).
+# 
+#  THE COUGAAR SOFTWARE AND ANY DERIVATIVE SUPPLIED BY LICENSOR IS
+#  PROVIDED 'AS IS' WITHOUT WARRANTIES OF ANY KIND, WHETHER EXPRESS OR
+#  IMPLIED, INCLUDING (BUT NOT LIMITED TO) ALL IMPLIED WARRANTIES OF
+#  MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE, AND WITHOUT
+#  ANY WARRANTIES AS TO NON-INFRINGEMENT.  IN NO EVENT SHALL COPYRIGHT
+#  HOLDER BE LIABLE FOR ANY DIRECT, SPECIAL, INDIRECT OR CONSEQUENTIAL
+#  DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE OF DATA OR PROFITS,
+#  TORTIOUS CONDUCT, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+#  PERFORMANCE OF THE COUGAAR SOFTWARE.
+# </copyright>
+
+#
+# if $CIP/lib contains:
+#    foo.jar.new
+#    foo.jar.old
+#    foo.jar -> foo.jar.new
+# this script does:
+#    rm foo.jar.new foo.jar
+#    ln -s foo.jar.old foo.jar
+#
+
+usage () {
+  cat <<EOF
+Usage:
+  $0 MODULE
+
+  MODULE    module name (e.g. "core")
+
+Reverts the output of "transform_jar".
+
+if $CIP/lib contains:
+   foo.jar.new
+   foo.jar.old
+   foo.jar -> foo.jar.new
+this script does:
+   rm foo.jar.new foo.jar
+   ln -s foo.jar.old foo.jar
+
+Example:
+  # restore "core.jar.old"
+  $0 util
+EOF
+}
+
+if [ -z $1 ] || [ $1 = --help ]; then
+  usage
+  exit -1
+fi
+
+MODULE=$1
+
+VERBOSE=
+
+CIP=$COUGAAR_INSTALL_PATH
+
+if [ -z $CIP ]; then
+  CIP=../
+fi
+if [ ! -d $CIP ]; then
+  Update the $0 script\'s \$CIP variable
+  exit -1
+fi
+export COUGAAR_INSTALL_PATH=$CIP
+
+restore_jars () {
+  FROM=$CIP/lib/$MODULE.jar
+  if [ -L $FROM ]; then
+    if [ -f $CIP/lib/$MODULE.jar.old ]; then
+      # restore backup
+      rm $FROM || exit -1
+      if [ -f $CIP/lib/$MODULE.jar.new ]; then
+        rm $CIP/lib/$MODULE.jar.new || exit -1
+      fi
+      ln -s $CIP/lib/$MODULE.jar.old $FROM || exit -1
+    fi
+  elif [ -f $FROM ]; then
+    # make backup
+    mv $FROM $CIP/lib/$MODULE.jar.old || exit -1
+    ln -s $CIP/lib/$MODULE.jar.old $FROM || exit -1
+  fi
+}
+
+restore_jars
+
+cat <<EOF
+Removed \$CIP/lib/$MODULE.jar.new
+Linked \$CIP/lib/$MODULE.jar.old -> \$CIP/lib/$MODULE.jar
+
+Also consider removing the temporary directories:
+  rm -rf \$CIP/$MODULE/old \$CIP/$MODULE/new
+EOF

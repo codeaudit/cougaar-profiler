@@ -28,38 +28,39 @@
 usage () {
   cat <<EOF
 Usage:
-  $0 TYPE MODULE [FILTER ..]
+  $0 MODULE [FILTER ..]
 
-  TYPE      "jdk" or "cougaar"
   MODULE    module name (e.g. "core")
   FILTER    optional filter path(s)
 
 Adds profiling instructions to classes in the specified
 module's jar file.
 
+If the module name matches "java*patch" then the corresponding
+"java.*" package is profiled.
+
 Examples:
   # profile all of java.util.*,
   # create new \$CIP/lib/javautilpatch.jar
-  $0 jdk util
+  $0 javautilpatch
 
   # profile all of Cougaar core,
   # create new \$CIP/lib/core.jar
-  $0 cougaar core
+  $0 core
 
   # profile some of Cougaar planning,
   # create new \$CIP/lib/planning.jar
-  $0 cougaar planning org/cougaar/planning/ldm org/cougaar/planning/plugin
+  $0 planning org/cougaar/planning/ldm org/cougaar/planning/plugin
 EOF
 }
 
-if [ -z $2 ] || [ $1 = --help ]; then
+if [ -z $1 ] || [ $1 = --help ]; then
   usage
   exit -1
 fi
 
-TYPE=$1
-MODULE=$2
-shift 2
+MODULE=$1
+shift 1
 FILTERS=$*
 
 VERBOSE=
@@ -69,6 +70,8 @@ CIP=$COUGAAR_INSTALL_PATH
 BCEL=$CIP/sys/bcel.jar
 
 DEPENDENCY_FILE="$CIP/build/data/default.build"
+
+SIGN_SCRIPT="$CIP/operator/sign"
 
 if [ -z $CIP ]; then
   CIP=../
@@ -103,12 +106,18 @@ restore_jars () {
 }
 
 commit_jars () {
+  # sign the jar
+  if [ -x $SIGN_SCRIPT ]; then
+    echo "  signing new $MODULE.jar"
+    $SIGN_SCRIPT $CIP/lib/$MODULE.jar.new || exit -1
+  fi
+
   # create link to our new jar
   if [ -L $CIP/lib/$MODULE.jar ]; then
-    rm $CIP/lib/$MODULE.jar
+    rm $CIP/lib/$MODULE.jar || exit -1
   fi
   if [ ! -f $CIP/lib/$MODULE.jar ]; then
-    ln -s $CIP/lib/$MODULE.jar.new $CIP/lib/$MODULE.jar
+    ln -s $CIP/lib/$MODULE.jar.new $CIP/lib/$MODULE.jar || exit -1
   fi
 }
 
@@ -271,8 +280,8 @@ transform () {
 }
 
 transform_jdk () {
-  NAME=$MODULE
-  MODULE="java${MODULE}patch"
+  NAME=$1
+
   if [ -z $FILTERS ]; then
     FILTERS="java/${NAME}/*"
   fi
@@ -286,11 +295,11 @@ transform_cougaar () {
   transform $LIB
 }
 
-if [ $TYPE = jdk ]; then
-  transform_jdk
-elif [ $TYPE = cougaar ]; then
+# parse "java${NAME}patch"
+NAME=`echo $MODULE | perl -ne 'print $1 if (/^java(.*)patch$/)'`
+
+if [ -z $NAME ]; then
   transform_cougaar
 else
-  usage
-  exit -1
+  transform_jdk $NAME
 fi
