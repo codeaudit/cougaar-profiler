@@ -167,7 +167,7 @@
     
     <!-- jarfiles required by this module, relative to various other paths -->
     <!-- WARNING: Only relative paths work here. -->
-    <property name="compile.jarlist" value=""/>
+    <property name="compile.jarlist" value="DUMMYJAR"/>
     <!-- Put absolute paths on this list, in the form of a path. -->
     <property name="compile.abs.jarlist" value=""/>
 
@@ -176,7 +176,7 @@
 
     <!-- Extra jars needed at run / unit-test time. -->
     <!-- WARNING: Only relative paths work here. -->
-    <property name="run.jarlist" value=""/>
+    <property name="run.jarlist" value="DUMMYJAR"/>
     <!-- Put absolute paths on this list, in the form of a path. -->
     <property name="run.abs.jarlist" value=""/>
     
@@ -576,7 +576,7 @@
     <target name="zip-docs" depends="javadocs, set-zip-dirs, zip-copy-docs" description="Zip up built javadocs" if="has.src">
     <!-- FIXME: Put zip files someplace relative to TARGETBASE? -->
     <!-- FIXME: This fails if zipbase doesnt exist, ie if no javadocs -->
-      <zip zipfile="../${module}-stub.zip" basedir="${zipbase}" />
+    <zip zipfile="../${module}-api.zip" basedir="${zipbase}" />
       <delete dir="${zipdir.javadocs}"/>
     </target>
     <target name="zip-copy-docs" depends="javadocs, set-zip-dirs" if="has.src">

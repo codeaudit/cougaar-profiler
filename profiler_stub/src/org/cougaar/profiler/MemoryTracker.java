@@ -30,21 +30,13 @@ package org.cougaar.profiler;
  */
 public abstract class MemoryTracker {
 
-  private static final MemoryTracker NULL = 
+  public static final MemoryTracker NULL = 
     new MemoryTracker() {
       public void add(Object o) {}
     };
 
   public static final MemoryTracker getInstance(
-      String type, int words) {
-    return NULL;
-  }
-
-  public static final MemoryTracker getInstance(
-      String type,
-      int words,
-      boolean has_size,
-      boolean has_size) {
+      String classname, int bytesEach, Options options) {
     return NULL;
   }
 
