@@ -1,41 +1,25 @@
 <html>
-<head><title>Cougaar MemoryTracker Bytecode Modifier</title></head>
+<head><title>Cougaar Memory Profiler Bytecode Transform</title></head>
 <body>
-<h2>Cougaar MemoryTracker Bytecode Modifier</h2>
+<h2>Cougaar Memory Profiler Bytecode Transform</h2>
 <p>
 This module contains bytecode tools that add MemoryTracker
 profiling instructions to class files.
 <p>
+<hr>
+<p>
+<h3>Usage</h3>
+<p>
 <a href="http://jakarta.apache.org/bcel/">BCEL 5.1</a> is required
 to modify the classes but not required when running the profiler.
 <p>
-There are two usage patterns.  The simplest is to run the
-modifier on a single class:<pre>
-  TRANSFORM=$COUGAAR_INSTALL_PATH/lib/profiler_transform.jar
-  BCEL=$COUGAAR_INSTALL_PATH/sys/bcel.jar
-  LIB=$BCEL:$TRANSFORM  # plus other jars as necessary
-  cat YourObject.class |\
-    java \
-    -classpath $LIB \
-    org.cougaar.profiler.transform.AddProfiler - \
-    &gt; /tmp/YourObject.class
+The "bin/transform_jar" script can be used to instrument complete
+jars (e.g. "lib/core.jar", "sys/tomcat_40.jar", etc) or JDK
+packages (e.g. "javaiopatch", "javautilpatch", etc).  For details
+run:
+<pre>
+  ./bin/transform_jar --help
 </pre>
-Run the above class with "--help" for additional options.
-<p>
-If you're modifying more than one class then you should use
-the helper "ProfileAll" class, which recursively finds and
-modifies "*.class" files:<pre>
-  TRANSFORM=$COUGAAR_INSTALL_PATH/lib/profiler_transform.jar
-  BCEL=$COUGAAR_INSTALL_PATH/sys/bcel.jar
-  LIB=$BCEL:$TRANSFORM  # plus other jars as necessary
-  java \
-    -classpath $LIB \
-    org.cougaar.profiler.transform.ProfileAll\
-    *
-</pre>
-A directory named "new" will be created and the modified class
-files will be placed in that directory.  Run the above class
-with "--help" for additional options.
 <p>
 The class modifier can also be used within a ClassLoader at class
 definition time.  The "AddProfiler" defines a standard BCEL
@@ -43,5 +27,171 @@ ClassLoader method:<pre>
   public JavaClass modifyClass(JavaClass clazz) {..}
 </pre>
 See BCEL's "org.apache.bcel.util.ClassLoader" for details.
+<p>
+<hr>
+<p>
+<h3>Design Details</h3>
+<p>
+The bytecode modification is done by the
+<a href=
+"http://cougaar.org/cgi-bin/cvsweb.cgi/profiler_transform/src/org/cougaar/profiler/transform/AddProfiler.java?cvsroot=profiler">AddProfiler</a>
+class.
+<p>
+The basic idea is to transform a class like:<pre>
+  public class Bar extends Foo {
+    public Bar() {
+      System.out.println("Hello, world!");
+    }
+  }
+</pre>
+into:<pre>
+  import org.cougaar.profiler.MemoryTracker;
+  public class Bar extends Foo {
+    public Bar() {
+      System.out.println("Hello, world!");
+      MY_PROFILER.add(this);
+    }
+    private static final MemoryTracker MY_PROFILER =
+      MemoryTracker.getInstance("Bar");
+  }
+</pre>
+<p>
+The full transform is more complex, since it must call call the
+profiler in all constructors, "clone()", and "readObject()".  The
+class must also be tagged with the original serialVersionUID to
+preserve serialization compatibility.
+<p>
+The "run()" method outlines the basic steps:
+<pre>
+  private void run() {
+    // make sure the serialVersionUID field exists, so we don't
+    // break serialization
+    addSerialVersionUID();
+
+    if (ENABLE_SIZE_AND_CAPACITY) {
+      // add "$get_size()" and "$get_capacity()" methods
+      defineSize();
+      defineCapacity();
+    }
+
+    // add static profiler field
+    defineProfilerField();
+
+    // init profiler field in class init method
+    initProfilerField();
+
+    // override "profile_&lt;super&gt;" method to disable super's profiler
+    disableSuperProfiler();
+
+    // add our "profile_&lt;class&gt;" method
+    addClassProfiler();
+
+    // update constructors with "profile_&lt;class&gt;" calls
+    // (excluding constructors that call "this(..)")
+    //
+    // note that the default constructor always exists
+    callProfilerInConstructors();
+
+    // catch "readObject", which is a hidden constructor.
+    //
+    // we can ignore "readExternal" since it calls the no-arg
+    // constructor.
+    callProfilerInReadObject();
+
+    // handle "clone", which is yet another hidden constructor.
+    callProfilerInClone();
+  }
+</pre>
+<p>
+The note that "the default constructor always exists" refers to
+javac's creation of a default constructor if one is not specified,
+e.g.:<pre>
+  class Test {}
+</pre>
+Javac will create a "<code>public Test() { super(); }</code>"
+constructor.  The VM requires at least one constructor for any class
+that will be instantiated, so the bytecode instrumentor doesn't need
+to add constructors.
+<p>
+"clone" creates an object through "super.clone()", which doesn't call
+the constructor.  The result of "super.clone()" is tracked.  If clone
+doesn't call "super.clone()" then it presumable returns either an
+existing object or uses a constructor to create a new instance.
+<p>
+"readObject" creates the object without calling the constructor.
+Here's an example test-case:<pre>
+   import java.io.*;
+   class Test implements Serializable {
+     public static void main(String[] args) throws Exception {
+       Test t1 = new Test();
+       System.out.println("t1: "+t1);
+       Test t2 = (Test) testSerial(t1);
+       System.out.println("t2: "+t2);
+     }
+     public Test() {
+       System.out.println("constructor");
+     }
+     private void readObject(ObjectInputStream s) throws Exception {
+       System.out.println("readObject");
+       s.defaultReadObject();
+     }
+     private static Object testSerial(Object o) throws Exception {
+       ByteArrayOutputStream bos = new ByteArrayOutputStream();
+       ObjectOutputStream os = new ObjectOutputStream(bos);
+       os.writeObject(o);
+       os.flush();
+       o = null;
+       byte[] b = bos.toByteArray();
+       ByteArrayInputStream bis = new ByteArrayInputStream(b);
+       ObjectInputStream is = new ObjectInputStream(bis);
+       Object newO = is.readObject();
+       return newO;
+     }
+   }
+</pre>
+It generates output similar to:<pre>
+  constructor
+  t1: Main@1a16869
+  readObject
+  t2: Main@19efb05
+</pre>
+ObjectInputStream uses ObjectStreamClass "newInstance()", which uses:
+<pre>
+  import sun.reflect.ReflectionFactory;
+    private static final ReflectionFactory reflFactory = ..;
+      ..
+      Constructor cons = reflFactory.newConstructorForSerialization(cl, cons);
+      ..
+      return cons.newInstance(..);
+</pre>
+From there it's muddy, since we're in Sun's private code, but the end
+result is that "readObject" never calls the constructor.
+<p>
+Externalizable will call the zero-arg constructor.  If there's no zero-arg 
+constructor then it'll throw a runtime InvalidClassException.  Note that
+non-static inner classes always pass the outer class as an implicit first
+parameter, so they can't be Externalizable.
+<p>
+The profiler can't track primitive arrays since they're not created
+through a class constructor.  A possible workaround is to track
+arrays created by a profiled class by tracking the result of
+"newarray" bytecodes.  This is different than the profiler's normal
+operation, since arrays constructed by non-profiled classes won't
+be tracked, as opposed to the current behavior where profiled classes
+are tracked regardless of which code constructed them.
+<p>
+Additionally, most of "java.lang.*" (e.g. String) can't be profiled,
+since these classes are constructed during VM initialization and
+would cause fatal <code>ExceptionInInitializerError</code> errors.
+A similar workaround to the above primitive-array issue could be
+implemented.  Also note that the profiler UI supports per-instance
+"toString()" views which may indirectly show String usage.
+<p>
+The above primitive-array and String limitations are relatively
+minor.  For a text-focused application this could be major profiling
+limitation, in which case the above workarounds or a VM-level
+profiler is required (e.g.  hprof).  For most other applications the
+memory usage and leaks occur in <i>their</i> classes, or are at least
+evident from their code.
 </body>
 </html>
