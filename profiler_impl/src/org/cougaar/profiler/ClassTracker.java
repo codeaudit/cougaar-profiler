@@ -159,7 +159,8 @@ public class ClassTracker extends MemoryTracker {
         }
       }
 
-      // First, clear some stats
+      // clear size and capacity stats
+      overall_stats.reset();
       if (agents != null) { 
         agents.reset();
       }
@@ -195,61 +196,10 @@ public class ClassTracker extends MemoryTracker {
         // trim to size
         InstanceStats[] old = ret;
         ret = new InstanceStats[ret_size];
-        System.arraycopy(
-            old, 0, ret, 0, ret_size);
+        System.arraycopy(old, 0, ret, 0, ret_size);
       }
 
       return ret;
-    }
-  }
-
-  protected static class AgentsTable {
-    private int count;
-    private String[] names;
-    private ClassStats[] stats;
-
-    public String[] getNames() {
-      String[] ret = new String[count];
-      for (int i = 0; i < count; i++) {
-        ret[i] = names[i];
-      }
-      return ret;
-    }
-
-    public ClassStats get(String agent) {
-      agent = agent.intern();
-      for (int j = 0; j < count; j++) {
-        if (names[j] == agent) {
-          return stats[j];
-        }
-      }
-      return null;
-    }
-    public void put(String agent, ClassStats cs) {
-      if (count == 0) {
-        names = new String[17];
-        stats = new ClassStats[17];
-      }
-      if ((count + 1) >= names.length) {
-        int newCapacity = 2 * count;
-        String[] oldAgentNames = names;
-        names = new String[newCapacity];
-        System.arraycopy(
-            oldAgentNames, 0, names, 0, count);
-        ClassStats[] oldAgentStats = stats;
-        stats = new ClassStats[newCapacity];
-        System.arraycopy(
-            oldAgentStats, 0, stats, 0, count);
-      }
-      names[count] = agent;
-      stats[count] = cs;
-      ++count;
-    }
-    public void reset() {
-      for (int i = 0; i < count; i++) {
-        ClassStats cs = stats[i];
-        cs.reset();
-      }
     }
   }
 
@@ -290,8 +240,7 @@ public class ClassTracker extends MemoryTracker {
         // We could increment a counter every time a collection is created,
         // but this would require to lookup the subject information.
         cs.allocate(current);
-        cs.update(
-            size, maxSize, capacity, maxCapacity);
+        cs.update(size, maxSize, capacity, maxCapacity);
       }
       overall_stats.update(
           size, maxSize, capacity, maxCapacity);

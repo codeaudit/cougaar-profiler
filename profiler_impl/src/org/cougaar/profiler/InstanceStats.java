@@ -26,45 +26,25 @@ import java.lang.ref.WeakReference;
  * Instance data, including a weak reference to the object
  * and optional allocation timestamp, stacktrace, size
  * metrics, and context.
- */
+ */ 
 public class InstanceStats {
 
   // this baseclass, with just a weak reference to the instance,
   // costs 40 bytes
+
+  //
+  // RFE: we could add these fields to the instance itself, since
+  // we're modifying its bytecode anyways.  We would need to tag
+  // the class with a new InstanceStats interface and add the
+  // necessary fields and methods.  A change in profiling detail
+  // may require modifying the class to add/remove fields.
+  // 
 
   /** A WeakReference to the object. */
   private final WeakReference ref;
 
   /** for ClassTracker use! */
   InstanceStats next;
-
-  // factory method:
-  static InstanceStats newInstanceStats(
-      Object obj,
-      boolean plusTime,
-      boolean plusStack,
-      boolean plusSize,
-      boolean plusContext) {
-    WeakReference ref = new WeakReference(obj);
-    long time = (plusTime ? System.currentTimeMillis() : -1);
-    Throwable stack = (plusStack ? new Throwable() : null);
-    InstanceContext context = 
-      (plusContext ? InstanceContext.getInstanceContext() : null);
-    // return subclass with minimal fields, to save memory.
-    // we only implement some of the permutations noted below.
-    if (!plusSize && (context == null)) { 
-      if (!plusStack) {
-        if (!plusTime) {
-          return new InstanceStats(ref);
-        } else {
-          return new InstanceStats.WithTime(ref, time);
-        }
-      }
-      return new InstanceStats.WithTimeStack(ref, time, stack);
-    }
-    return new InstanceStats.WithTimeStackSizeContext(
-        ref, time, stack, context);
-  }
 
   /** Get the instance by accessing the weak reference */
   public final Object get() {
@@ -107,99 +87,82 @@ public class InstanceStats {
   void update() {
   }
 
-  InstanceStats(WeakReference ref) {
+  protected InstanceStats(WeakReference ref) {
     this.ref = ref;
+  }
+
+  // factory method:
+  static InstanceStats newInstanceStats(
+      Object obj,
+      boolean plusTime,
+      boolean plusStack,
+      boolean plusSize,
+      boolean plusContext) {
+    // get field values
+    WeakReference ref = new WeakReference(obj);
+    long time = (plusTime ? System.currentTimeMillis() : -1);
+    Throwable stack = (plusStack ? new Throwable() : null);
+    InstanceContext context = 
+      (plusContext ? InstanceContext.getInstanceContext() : null);
+
+    // allocate subclass with minimal number of field slots
+    if (context != null) {
+      // a context is relatively expensive, so for simplicity we
+      // don't implement all 8 permutations:
+      //   (time x stack x size) + context
+      // and instead use our catch-all implementation with all
+      // four field slots. 
+      return new WithTimeStackSizeContext(ref, time, stack, context);
+    } else if (plusTime) {
+      if (plusStack) {
+        if (plusSize) {
+          return new WithTimeStackSize(ref, time, stack);
+        } else {
+          return new WithTimeStack(ref, time, stack);
+        }
+      } else if (plusSize) {
+        return new WithTimeSize(ref, time);
+      } else {
+        return new WithTime(ref, time);
+      }
+    } else if (plusStack) {
+      // a stack is relatively expensive, so for simplicity we
+      // don't implement these permutations:
+      //    StackSize
+      //    Stack
+      // and waste 8 bytes for an unused time slot:
+      //    TimeStackSize
+      //    TimeStack
+      if (plusSize) {
+        return new WithTimeStackSize(ref, -1, stack);
+      } else {
+        return new WithTimeStack(ref, -1, stack);
+      }
+    } else if (plusSize) {
+      return new WithSize(ref);
+    } else {
+      // the minimal case
+      return new InstanceStats(ref);
+    }
   }
 
   //
   // impls with additional fields
   //
-  // all 15 permutations would be:
-  //   - 
-  //   time
-  //   stack
-  //   size
-  //   context
-  //   time+stack 
-  //   time+size 
-  //   time+context 
-  //   stack+size 
-  //   stack+context 
-  //   size+context 
-  //   time+stack+size 
-  //   time+stack+context 
-  //   stack+size+context 
-  //   time+stack+size+context 
-  //
-  // we're only doing this to optionally save some memory, so for
-  // now we'll implement some common permutations:
-  //   -     (minimal)
-  //   time  (minimal)
-  //   time+stack (typical)
-  //   time+stack+size+context  (catch-all)
+  // we define 7 of the possible 15 permutations.
+  // The other 8 permutations are not worth optimizing.
+  // See "newInstanceStats(..)" for details.
   //
 
-  private static class WithTime extends InstanceStats {
-    // this adds 8 bytes to the basic size, for a total
-    // of 48 bytes
-    private final long time;
-    public WithTime(
-        WeakReference ref,
-        long time) {
-      super(ref);
-      this.time = time;
-    }
-    public long getAllocationTime() {
-      return time;
-    }
-  }
-  private static class WithTimeStack extends WithTime {
-    // I worked out an estimated memory cost for the stack
-    // by looking at Throwable, StackTraceElement, and noting
-    // that element strings are interned.
-    //
-    // The initial representation uses a lazy native "backtrace"
-    // that's used to fill in the elements when the're requested.
-    // A request is any "toString()", "getStackTrace()",
-    // "writeObject()", or other accesor.  Once resolved the
-    // backtrace is presumably freed.  A backtrace is likely
-    // a native array of 32-bit PC addresses.
-    //  
-    // Cost estimates (in bytes) for a stack with N elements:
-    //   initial:    32 + 4*N
-    //   resolved:   44 + 24*N 
-    // the "WithTime" baseclass costs 48 bytes, yielding:
-    //   initial:    80 + 4*N
-    //   resolved:   92 + 24*N 
-    private final Throwable stack;
-    public WithTimeStack(
-        WeakReference ref,
-        long time,
-        Throwable stack) {
-      super(ref, time);
-      this.stack = stack;
-    }
-    public Throwable getThrowable() {
-      return stack;
-    }
-  }
-  private static class WithTimeStackSizeContext extends WithTimeStack {
-    // The memory cost is the super's cost plus 20 bytes for
-    // the fields in this class, plus more if the context is
-    // non-null.  A context costs somewhere around 80+ bytes,
-    // depending upon the stack and number of principles.
-    private final InstanceContext context;
+  private static class WithSize extends InstanceStats {
+    // this adds 20 bytes to the basic size, for a total
+    // of 60 bytes
     private int size;
     private int capacity;
     private int maxSize;
     private int maxCapacity;
-    public WithTimeStackSizeContext(
-        WeakReference ref,
-        long time,
-        Throwable stack,
-        InstanceContext context) {
-      super(ref, time, stack);
-      this.context = context;
+    public WithSize(WeakReference ref) {
+      super(ref);
     }
     void update() {
       Object o = get();
@@ -241,8 +204,90 @@ public class InstanceStats {
     public int getCapacity() { return capacity; }
     public int getMaximumSize() { return maxSize; }
     public int getMaximumCapacity() { return maxCapacity; }
+  }
+  private static class WithTime extends InstanceStats {
+    // this adds 8 bytes to the basic size, for a total
+    // of 48 bytes
+    private final long time;
+    public WithTime(WeakReference ref, long time) {
+      super(ref);
+      this.time = time;
+    }
+    public long getAllocationTime() {
+      return time;
+    }
+  }
+  private static class WithTimeSize extends WithSize {
+    // this adds 8 bytes to the super's size, for a total
+    // of 68 bytes
+    private final long time;
+    public WithTimeSize(WeakReference ref, long time) {
+      super(ref);
+      this.time = time;
+    }
+    public long getAllocationTime() {
+      return time;
+    }
+  }
+  private static class WithTimeStack extends WithTime {
+    // The initial Throwable representation uses a lazy native
+    // "backtrace" that's used to fill in the elements when they're
+    // requested.  A request is any "toString()", "getStackTrace()",
+    // "writeObject()", or other accesor.  Once resolved the
+    // backtrace is presumably freed.  A backtrace is likely a native
+    // array of 32-bit PC addresses.  The resolved StackTraceElement
+    // strings are interned, so that cost is amortized out.
+    //  
+    // Cost estimates (in bytes) for a stack with N elements:
+    //   initial:    32 + 4*N
+    //   resolved:   44 + 24*N 
+    // the "WithTime" baseclass costs 48 bytes, yielding:
+    //   initial:    80 + 4*N
+    //   resolved:   92 + 24*N 
+    private final Throwable stack;
+    public WithTimeStack(
+        WeakReference ref,
+        long time,
+        Throwable stack) {
+      super(ref, time);
+      this.stack = stack;
+    }
+    public Throwable getThrowable() {
+      return stack;
+    }
+  }
+  private static class WithTimeStackSize extends WithTimeSize {
+    // same as above WithTimeStack + 20 bytes for size metrics
+    private final Throwable stack;
+    public WithTimeStackSize(
+        WeakReference ref,
+        long time,
+        Throwable stack) {
+      super(ref, time);
+      this.stack = stack;
+    }
+    public Throwable getThrowable() {
+      return stack;
+    }
+  }
+  private static class WithTimeStackSizeContext extends WithTimeStackSize {
+    // The memory cost is the super's cost plus context, which
+    // costs somewhere around 80+ bytes, depending upon the stack
+    // and number of principles.
+    private final InstanceContext context;
+    public WithTimeStackSizeContext(
+        WeakReference ref,
+        long time,
+        Throwable stack,
+        InstanceContext context) {
+      super(ref, time, stack);
+      this.context = context;
+      if (context == null) {
+        throw new InternalError("null context");
+      }
+    }
     public InstanceContext getInstanceContext() {
-      return (context == null ? InstanceContext.NULL : context);
+      return context;
     }
     public String getAgentName() {
       return getInstanceContext().getAgentName();

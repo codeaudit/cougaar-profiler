@@ -66,7 +66,6 @@ public class ClassStats {
   public long getMaximumCapacityEver() { return 0; }
 
   void reset() {
-    instances = 0;
   }
   void update(
     long size,
@@ -90,6 +89,9 @@ public class ClassStats {
   final void gc(InstanceStats is) {
     instances--;
     collected++;
+  }
+  final void resetInstances() {
+    instances = 0;
   }
 
   public String toString() {
@@ -118,13 +120,11 @@ public class ClassStats {
     public long getMaximumCapacityEver() { return maxCapacityEver; }
 
     void reset() {
-      super.reset();
       totalSize = 0;
       totalCapacity = 0;
       maxCapacity = 0;
       maxCapacity = 0;
     }
-
     void update(
         long size,
         long maxSize,

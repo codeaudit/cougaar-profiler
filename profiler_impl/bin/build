@@ -20,26 +20,48 @@
 # </copyright>
 
 #
-# compile the profiler modules and example JDK+core patches
+# compile the profiler modules
+# transform JDK packages (io, net, rmi, util)
+# transform Cougaar packages (core)
 #
 
-CIP=~/profiler
+CIP=$COUGAAR_INSTALL_PATH
+
+PROFILER_MODULES="\
+  profiler_impl\
+  profiler_transform\
+  profiler_servlet"
+
+JDK_MODULES="\
+  io\
+  net\
+  rmi\
+  util"
+
+COUGAAR_MODULES="\
+  core"
+
+TRANSFORM="$CIP/profiler_transform/bin/transform_jar"
+
 if [ ! -d $CIP ]; then
   Update the $0 script\'s \$CIP variable
   exit -1
 fi
-
 export COUGAAR_INSTALL_PATH=$CIP
 
-cd $CIP || exit -1
-
 # compile the profiler modules
-for x in profiler_impl profiler_transform profiler_servlet; do
-  echo "compiling $x"
-  cd $x || exit -1
-  ant dist-module || exit -1
-  cd -
+for x in $PROFILER_MODULES; do
+  MODULE=$x
+
+  echo "compiling $MODULE"
+  cd $CIP/$MODULE || exit -1
+  ant install || exit -1
 done
+
+if [ ! -f $TRANSFORM ]; then
+  echo "transform script not found: $TRANSFORM"
+  exit -1
+fi
 
 # transform JDK sources
 #
@@ -49,83 +71,38 @@ done
 # at runtime be sure to include these profiled jars:
 #    java \
 #      -Xbootclasspath/p:$CIP/lib/profiler_impl.jar \
-#      -Xbootclasspath/p:$CIP/lib/javautilpatch.jar.prof \
-#      -Xbootclasspath/p:$CIP/lib/javaiopatch.jar.prof \
+#      -Xbootclasspath/p:$CIP/lib/javautilpatch.jar \
+#      -Xbootclasspath/p:$CIP/lib/javaiopatch.jar \
 #      ...
-TMP=$CIP/tmp
-BCEL=$CIP/sys/bcel.jar
-for x in util io net rmi; do
-  cd $CIP
-  echo "transforming java.$x  (java${x}patch.jar.prof)"
-  if [ ! -d java${x}patch/tmp/classes ]; then
-    echo "  creating java${x}patch"
-    mkdir -p java${x}patch/tmp/classes || exit -1
-    cd java${x}patch/tmp/classes || exit -1
-    # replace this with a more selective filter, e.g.
-    #   FILTER=java/util/HashMap.class
-    # also consider inner classes, e.g.
-    #   java/util/HashMap\$Entry.class
-    FILTER="java/$x"
-    jar xf $JAVA_HOME/jre/lib/rt.jar $FILTER || exit -1
-    if [ $x = io ] && [ -f $CIP/lib/javaiopatch.jar ]; then
-      # include Cougaar's custom javaiopatch overlay
-      jar xf $CIP/lib/javaiopatch.jar java || exit -1
-    fi
-  fi
-  cd $CIP/java${x}patch || exit -1
-  java \
-    -classpath $BCEL:$CIP/lib/profiler_transform.jar\
-    org.cougaar.profiler.transform.ProfileAll\
-    tmp || exit -1
-  cd new/tmp/classes || exit -1
-  jar cf $CIP/lib/java${x}patch.jar.prof * || exit -1
+for x in $JDK_MODULES; do
+  # replace this with a more selective filter, e.g.
+  #   FILTER=java/util/HashMap.class
+  # also consider inner classes, e.g.
+  #   java/util/HashMap\$Entry.class
+  FILTER="java/$x/*"
+  $TRANSFORM jdk $x $FILTER || exit -1
 done
 
 # transform Cougaar modules
-#
-# as noted above, usually you'd only profile a subset of
-# a module as a jar overlay:
-#    unzip the subset to $x/tmp/classes
-#    transform it to $x/new/tmp/classes
-#    overlay the other classes (using `unzip -n`)
-#    jar to lib/$x.jar.prof
-for x in core; do
-  cd $CIP
-  LIB=""
-  if [ $x = core ]; then
-    LIB=$CIP/lib/core.jar:$CIP/lib/util.jar:$CIP/sys/servlet.jar
-  fi
-  echo "transforming $x  (${x}.jar.prof)"
-  if [ ! -d $CIP/$x/tmp/classes ]; then
-    echo "  creating $x"
-    mkdir -p $x/tmp/classes || exit -1
-    cd $x/tmp/classes || exit -1
-    # replace this with a more selective filter, e.g.
-    #   FILTER=org/cougaar/core/blackboard
-    FILTER=""
-    jar xf $CIP/lib/$x.jar $FILTER || exit -1
-    # if the FILTER is partial then you should overlay
-    # the full jar here, using `unzip -n`
-  fi
-  cd $CIP/$x || exit -1
-  java \
-    -classpath $BCEL:$CIP/lib/profiler_transform.jar:$LIB\
-    org.cougaar.profiler.transform.ProfileAll\
-    tmp || exit -1
-  cd new/tmp/classes || exit -1
-  jar cf $CIP/lib/$x.jar.prof * || exit -1
+for x in $COUGAAR_MODULES; do
+  # replace this with a more selective filter, e.g.
+  #   FILTER=org/cougaar/core/blackboard
+  FILTER=""
+  $TRANSFORM cougaar $x $FILTER || exit -1
 done
 
-cat <<EOF
+cat << EOF
 
-Build succeeded.  You must modify your Node script to load the
-"profiler_impl.jar":
+Build succeeded.  You must modify your \$CIP/bin/Node script to
+load the "profiler_impl.jar":
   java \\
     -Xbootclasspath/p:\$CIP/lib/profiler_impl.jar ..
 and optionally load one or more of the JDK patch jars:
-    -Xbootclasspath/p:\$CIP/lib/javaiopatch.jar.prof \\
-    -Xbootclasspath/p:\$CIP/lib/javautilpatch.jar.prof \\
-    -Xbootclasspath/p:\$CIP/lib/javanetpatch.jar.prof \\
-    -Xbootclasspath/p:\$CIP/lib/javarmipatch.jar.prof ..
-also optionally copy over the modified core jar.
 EOF
+for x in $JDK_MODULES; do
+  echo "    -Xbootclasspath/p:\$CIP/lib/java${x}patch.jar\\"
+done
+echo "Symbolic links have been created for the modified Cougaar jars:"
+for x in $COUGAAR_MODULES; do
+  echo "    \$CIP/lib/${x}.jar"
+done
