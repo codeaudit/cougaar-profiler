@@ -22,7 +22,7 @@ package org.cougaar.profiler;
 
 /** 
  * Wrapper around a Throwable for stack-based equality.
- * @see Groupings.STACK_GROUP
+ * @see Groupings#STACK_GROUP
  */
 public final class StackElements {
 
