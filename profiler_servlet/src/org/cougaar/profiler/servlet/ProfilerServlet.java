@@ -67,7 +67,6 @@ extends ComponentServlet
 
     // Values of servlet parameters
     private static final String REQ_ACTION_SCRIPT = "script";
-    private static final String REQ_ACTION_ALL = "all";
     private static final String REQ_ACTION_TYPE = "type";
     private static final String REQ_ACTION_INSTANCES = "instances";
 
