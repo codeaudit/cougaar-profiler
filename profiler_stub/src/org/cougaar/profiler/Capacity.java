@@ -21,5 +21,34 @@
 package org.cougaar.profiler;
 
 public interface Capacity {
-  int $get_capacity();
+
+  /**
+   * Sum of array field lengths.
+   * <pre>
+   *   int ret = 0;
+   *   foreach (array field) {
+   *     type[] a = arrays[i]; 
+   *     if (a != null) {
+   *       ret += a.length;
+   *     }
+   *   }
+   *   return ret;
+   * </pre> 
+   */ 
+  int $get_capacity_count();
+
+  /**
+   * sum of array element sizes.
+   * <pre> 
+   *   int ret = 0;
+   *   foreach (array field) {
+   *     type[] a = arrays[i]; 
+   *     if (a != null) {
+   *       ret += 12 + a.length * sizeof(type);
+   *     }
+   *   }
+   *   return ret;
+   * </pre> 
+   */ 
+  int $get_capacity_bytes();
 }

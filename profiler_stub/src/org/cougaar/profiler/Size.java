@@ -21,5 +21,15 @@
 package org.cougaar.profiler;
 
 public interface Size {
+
+  /*
+   * "size()" value.
+   * <p>
+   * This looks for a field named:<ul> 
+   *   <li>size  <i>(e.g. ArrayList)</i></li>
+   *   <li>elementCount  <i>(e.g. Vector)</i></li>
+   *   <li>count  <i>(e.g. ByteArrayOutputStream)</i></li>
+   * </ul> 
+   */
   int $get_size();
 }
