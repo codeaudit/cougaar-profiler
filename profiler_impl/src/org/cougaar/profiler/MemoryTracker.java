@@ -25,33 +25,20 @@ package org.cougaar.profiler;
  */
 public abstract class MemoryTracker {
 
-  private static final MemoryTracker NULL = 
+  public static final MemoryTracker NULL = 
     new MemoryTracker() {
       public void add(Object o) {}
     };
 
-  private static final MemoryStats ms;
-
-  static {
-    ms = MemoryStatsImpl.getInstance();
-  }
-
-  protected MemoryTracker() { }
+  private static final MemoryStats ms =
+    MemoryStatsImpl.getInstance();
+  MemoryTracker() { }
 
   public static final MemoryTracker getInstance(
-      String type,
-      int bytes) {
-    return getInstance(type, bytes, false, false);
-  }
-
-  public static final MemoryTracker getInstance(
-      String type,
-      int bytes,
-      boolean has_size,
-      boolean has_capacity) {
+      String classname, int bytesEach, Options options) {
     if (ms != null) {
-      MemoryTracker mt = ms.getMemoryTracker(
-          type, bytes, has_size, has_capacity);
+      MemoryTracker mt = 
+        ms.getMemoryTracker(classname, bytesEach, options);
       if (mt != null) {
         return mt;
       }

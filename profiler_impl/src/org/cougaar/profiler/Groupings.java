@@ -69,9 +69,10 @@ public class Groupings {
   public static final String EQUALS = "equals";
   public static final String TO_STRING = "toString";
   public static final String HASHCODE = "hashcode";
+  public static final String CLASS = "class";
   public static final String TIME = "time";
-  public static final String SECOND= "second";
-  public static final String MINUTE= "minute";
+  public static final String SECOND = "second";
+  public static final String MINUTE = "minute";
   public static final String HOUR = "hour";
   public static final String SIZE = "size";
   public static final String SIZE_MOD_100 = "size_mod_100";
@@ -79,23 +80,47 @@ public class Groupings {
 
   /** get group names */
   public static final String[] getNames() {
-    return getNames(null);
+    return getNames(null, null);
   }
   public static final String[] getNames(String prefix) {
+    return getNames(prefix, null);
+  }
+  public static final String[] getNames(Options options) {
+    return getNames(null, options);
+  }
+  public static final String[] getNames(
+      String prefix, Options options) {
     String p = (prefix == null ? "" : prefix);
-    return new String[] {
-      p + STACK,
-      p + EQUALS,
-      p + TO_STRING,
-      p + HASHCODE,
-      p + TIME,
-      p + SECOND,
-      p + MINUTE,
-      p + HOUR,
-      p + SIZE,
-      p + SIZE_MOD_100,
-      p + SIZE_MOD_1000,
-    };
+    int n = 4;
+    if (options == null) {
+      n += 8;
+    } else {
+      n +=
+        (options.isTimeEnabled() ? 4 : 0) +
+        (options.isStackEnabled() ? 1 : 0) +
+        (options.isSizeEnabled() ? 3 : 0);
+    }
+    String[] ret = new String[n];
+    int i = 0;
+    if (options == null || options.isStackEnabled()) {
+      ret[i++] = p + STACK;
+    }
+    ret[i++] = p + EQUALS;
+    ret[i++] = p + TO_STRING;
+    ret[i++] = p + HASHCODE;
+    ret[i++] = p + CLASS;
+    if (options == null || options.isTimeEnabled()) {
+      ret[i++] = p + TIME;
+      ret[i++] = p + SECOND;
+      ret[i++] = p + MINUTE;
+      ret[i++] = p + HOUR;
+    }
+    if (options == null || options.isSizeEnabled()) {
+      ret[i++] = p + SIZE;
+      ret[i++] = p + SIZE_MOD_100;
+      ret[i++] = p + SIZE_MOD_1000;
+    }
+    return ret;
   }
 
   /** get group by name */
@@ -111,6 +136,8 @@ public class Groupings {
       ret = TO_STRING_GROUP;
     } else if (name.equals(HASHCODE)) {
       ret = HASHCODE_GROUP;
+    } else if (name.equals(CLASS)) {
+      ret = CLASS_GROUP;
     } else if (name.equals(TIME)) {
       ret = TIME_GROUP;
     } else if (name.equals(SECOND)) {
@@ -149,9 +176,12 @@ public class Groupings {
       public Object getKey(Object o) {
         InstanceStats is = (InstanceStats) o;
         Object obj = is.get();
+        if (obj == null) {
+          return null;
+        }
         // wrap the object in case of concurrent mods!
         // (e.g. ArrayList equality) 
-        return (obj == null ? null : new Wrapper(obj));
+        return new Wrapper(obj);
       }
     };
   /** group by object toString */
@@ -190,6 +220,19 @@ public class Groupings {
           }
         }
         return new Integer(hc);
+      }
+    };
+  /** group by object class */
+  public static final Group CLASS_GROUP =
+    new Group() {
+      public Object getKey(Object o) {
+        InstanceStats is = (InstanceStats) o;
+        Object obj = is.get();
+        if (obj == null) {
+          return null;
+        }
+        // use default "==" equality
+        return obj.getClass();
       }
     };
   /** group by allocation time */
@@ -299,8 +342,12 @@ public class Groupings {
       return hc;
     }
     public boolean equals(Object x) {
+      if (!(x instanceof Wrapper)) {
+        return false;
+      }
+      Object o2 = ((Wrapper) x).obj;
       try {
-        return obj.equals(x);
+        return obj.equals(o2);
       } catch (Exception e) {
         return false;
       }

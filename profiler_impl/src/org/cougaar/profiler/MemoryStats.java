@@ -27,8 +27,7 @@ public interface MemoryStats {
   ClassTracker getClassTracker(String classname);
 
   MemoryTracker getMemoryTracker(
-      String type,
-      int bytes,
-      boolean has_size,
-      boolean has_capacity);
+      String classname,
+      int bytesEach,
+      Options options);
 }

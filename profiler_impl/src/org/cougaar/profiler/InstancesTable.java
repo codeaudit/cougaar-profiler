@@ -104,7 +104,7 @@ abstract class InstancesTable {
     InstanceStats[] oldTable = objs;
     if (oldTable == null) {
       objs = new InstanceStats[8];
-      objs_threshold = objs.length * 7;
+      objs_threshold = objs.length * Configure.REHASH_FACTOR;
       return;
     }
     int oldCapacity = oldTable.length;
@@ -134,7 +134,7 @@ abstract class InstancesTable {
       }
     }
     objs = newTable;
-    objs_threshold = newCapacity * 7;
+    objs_threshold = newCapacity * Configure.REHASH_FACTOR;
   }
 
   public final void put(Object new_o, InstanceStats new_is) {

@@ -61,43 +61,6 @@ implements MemoryStats
     }
   }
 
-  public MemoryTracker getMemoryTracker(
-      String classname,
-      int bytes,
-      boolean has_size,
-      boolean has_capacity) {
-    synchronized (lock) {
-      // find
-      for (int i = 0; i < count; i++) {
-        if (classname.equals(names[i])) {
-          return trackers[i];
-        }
-      }
-      // ensure capacity
-      if (count == 0) {
-        names = new String[17];
-        trackers = new ClassTracker[17];
-      } else if ((count + 1) >= names.length) {
-        int newCapacity = (count << 1);
-        String[] new_cn = new String[newCapacity];
-        ClassTracker[] new_ct = new ClassTracker[newCapacity];
-        for (int i = 0; i < count; i++) {
-          new_cn[i] = names[i];
-          new_ct[i] = trackers[i];
-        }
-        names = new_cn;
-        trackers = new_ct;
-      }
-      // add
-      ClassTracker ct = ClassTracker.newClassTracker(
-          classname, bytes, has_size, has_capacity);
-      names[count] = classname;
-      trackers[count] = ct;
-      count++;
-      return ct;
-    }
-  }
-
   public static synchronized MemoryStats getInstance() {
     // we want a true VM singleton even if there are multiple
     // classloaders
@@ -167,6 +130,48 @@ implements MemoryStats
     return instance;
   }
 
+  public MemoryTracker getMemoryTracker(
+      String classname,
+      int bytesEach,
+      Options options) {
+    if (options == null) {
+      return null;
+    }
+
+    synchronized (lock) {
+      // find
+      for (int i = 0; i < count; i++) {
+        if (classname.equals(names[i])) {
+          return trackers[i];
+        }
+      }
+      // ensure capacity
+      if (count == 0) {
+        names = new String[17];
+        trackers = new ClassTracker[17];
+      } else if ((count + 1) >= names.length) {
+        int newCapacity = (count << 1);
+        String[] new_cn = new String[newCapacity];
+        ClassTracker[] new_ct = new ClassTracker[newCapacity];
+        for (int i = 0; i < count; i++) {
+          new_cn[i] = names[i];
+          new_ct[i] = trackers[i];
+        }
+        names = new_cn;
+        trackers = new_ct;
+      }
+      // add
+      ClassTracker ct = ClassTracker.newClassTracker(
+          classname,
+          bytesEach,
+          options);
+      names[count] = classname;
+      trackers[count] = ct;
+      count++;
+      return ct;
+    }
+  }
+
   static {
     // launch thread to periodically update our class trackers.
     //
@@ -178,7 +183,7 @@ implements MemoryStats
       public void run() {
         while (true) {
           try {
-            Thread.sleep(Configure.UPDATE_STATS_FREQUENCY);
+            Thread.sleep(Configure.UPDATE_FREQUENCY);
           } catch (InterruptedException ex) {
           }
           timerUpdate();

@@ -58,27 +58,15 @@ public class InstanceStats {
   }
   /** Most recent "size()" calculation */
   public int getSize() {
-    return (Configure.SUMMARY_SIZE ? currentSize() : 0);
-  }
-  /** Maximum observed size */
-  public int getMaximumSize() {
-    return getSize();
+    return (Configure.SHOW_CURRENT_SIZE ? currentSize() : 0);
   }
   /** Most recent "capacity_count()" calculation */
   public int getCapacityCount() {
-    return (Configure.SUMMARY_SIZE ? currentCapacityCount() : 0);
-  }
-  /** Maximum observed capacity count */
-  public int getMaximumCapacityCount() {
-    return getCapacityCount();
+    return (Configure.SHOW_CURRENT_SIZE ? currentCapacityCount() : 0);
   }
   /** Most recent "capacity_bytes()" calculation */
   public int getCapacityBytes() {
-    return (Configure.SUMMARY_SIZE ? currentCapacityBytes() : 0);
-  }
-  /** Maximum observed capacity bytes */
-  public int getMaximumCapacityBytes() {
-    return getCapacityBytes();
+    return (Configure.SHOW_CURRENT_SIZE ? currentCapacityBytes() : 0);
   }
   /** Context when allocated (based upon threadlocals */
   public InstanceContext getInstanceContext() {
@@ -129,20 +117,18 @@ public class InstanceStats {
     return 0;
   }
 
-  void update() {
-  }
-
   protected InstanceStats(WeakReference ref) {
     this.ref = ref;
   }
 
   // factory method:
-  static InstanceStats newInstanceStats(
-      Object obj,
-      boolean plusTime,
-      boolean plusStack,
-      boolean plusSize,
-      boolean plusContext) {
+  static InstanceStats newInstanceStats(Object obj, Options options) {
+    // parse options
+    boolean plusTime = options.isTimeEnabled();
+    boolean plusStack = options.isStackEnabled();
+    boolean plusContext = 
+      (Configure.CAN_CAPTURE_CONTEXT && options.isContextEnabled());
+
     // get field values
     WeakReference ref = new WeakReference(obj);
     long time = (plusTime ? System.currentTimeMillis() : -1);
@@ -157,34 +143,20 @@ public class InstanceStats {
       //   (time x stack x size) + context
       // and instead use our catch-all implementation with all
       // four field slots. 
-      return new WithTimeStackSizeContext(ref, time, stack, context);
+      return new WithTimeStackContext(ref, time, stack, context);
     } else if (plusTime) {
       if (plusStack) {
-        if (plusSize) {
-          return new WithTimeStackSize(ref, time, stack);
-        } else {
-          return new WithTimeStack(ref, time, stack);
-        }
-      } else if (plusSize) {
-        return new WithTimeSize(ref, time);
+        return new WithTimeStack(ref, time, stack);
       } else {
         return new WithTime(ref, time);
       }
     } else if (plusStack) {
       // a stack is relatively expensive, so for simplicity we
-      // don't implement these permutations:
-      //    StackSize
+      // don't implement this permutation:
       //    Stack
       // and waste 8 bytes for an unused time slot:
-      //    TimeStackSize
       //    TimeStack
-      if (plusSize) {
-        return new WithTimeStackSize(ref, -1, stack);
-      } else {
-        return new WithTimeStack(ref, -1, stack);
-      }
-    } else if (plusSize) {
-      return new WithSize(ref);
+      return new WithTimeStack(ref, -1, stack);
     } else {
       // the minimal case
       return new InstanceStats(ref);
@@ -199,103 +171,11 @@ public class InstanceStats {
   // See "newInstanceStats(..)" for details.
   //
 
-  private static class WithSize extends InstanceStats {
-    // this adds 24 bytes to the basic size, for a total
-    // of 64 bytes
-    private int size;
-    private int capacity_count;
-    private int capacity_bytes;
-    private int max_size;
-    private int max_capacity_count;
-    private int max_capacity_bytes;
-    public WithSize(WeakReference ref) {
-      super(ref);
-    }
-    void update() {
-      Object o = get();
-      if (o == null) {
-        size = 0;
-        capacity_count = 0;
-        capacity_bytes = 0;
-        return;
-      }
-      // update capacity:
-      if (o instanceof Capacity) {
-        Capacity c = (Capacity) o;
-        try {
-          capacity_count = c.$get_capacity_count();
-        } catch (Exception e) {
-          System.err.println("Failed \"$get_capacity_count()\":");
-          e.printStackTrace();
-        }
-        if (max_capacity_count < capacity_count) {
-          max_capacity_count = capacity_count;
-        }
-        try {
-          capacity_bytes = c.$get_capacity_bytes();
-        } catch (Exception e) {
-          System.err.println("Failed \"$get_capacity_bytes()\":");
-          e.printStackTrace();
-        }
-        if (max_capacity_bytes < capacity_bytes) {
-          max_capacity_bytes = capacity_bytes;
-        }
-      } else {
-        capacity_count = 0;
-        capacity_bytes = 0;
-      }
-      // update size:
-      if (o instanceof Size) {
-        Size s = (Size) o;
-        try {
-          size = s.$get_size();
-        } catch (Exception e) {
-          System.err.println("Failed \"$get_size()\":");
-          e.printStackTrace();
-        }
-      } else {
-        size = capacity_count;
-      } 
-      if (max_size < size) {
-        max_size = size;
-      }
-    }
-    public int getSize() {
-      return size;
-    }
-    public int getCapacityCount() {
-      return capacity_count;
-    }
-    public int getCapacityBytes() {
-      return capacity_bytes;
-    }
-    public int getMaximumSize() {
-      return max_size;
-    }
-    public int getMaximumCapacityCount() {
-      return max_capacity_count;
-    }
-    public int getMaximumCapacityBytes() {
-      return max_capacity_bytes;
-    }
-  }
   private static class WithTime extends InstanceStats {
     // this adds 8 bytes to the basic size, for a total
     // of 48 bytes
     private final long time;
     public WithTime(WeakReference ref, long time) {
-      super(ref);
-      this.time = time;
-    }
-    public long getAllocationTime() {
-      return time;
-    }
-  }
-  private static class WithTimeSize extends WithSize {
-    // this adds 8 bytes to the super's size, for a total
-    // of 72 bytes
-    private final long time;
-    public WithTimeSize(WeakReference ref, long time) {
       super(ref);
       this.time = time;
     }
@@ -330,26 +210,12 @@ public class InstanceStats {
       return stack;
     }
   }
-  private static class WithTimeStackSize extends WithTimeSize {
-    // same as above WithTimeStack + 24 bytes for size metrics
-    private final Throwable stack;
-    public WithTimeStackSize(
-        WeakReference ref,
-        long time,
-        Throwable stack) {
-      super(ref, time);
-      this.stack = stack;
-    }
-    public Throwable getThrowable() {
-      return stack;
-    }
-  }
-  private static class WithTimeStackSizeContext extends WithTimeStackSize {
+  private static class WithTimeStackContext extends WithTimeStack {
     // The memory cost is the super's cost plus context, which
     // costs somewhere around 80+ bytes, depending upon the stack
     // and number of principles.
     private final InstanceContext context;
-    public WithTimeStackSizeContext(
+    public WithTimeStackContext(
         WeakReference ref,
         long time,
         Throwable stack,

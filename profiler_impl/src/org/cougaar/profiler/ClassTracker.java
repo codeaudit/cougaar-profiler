@@ -27,6 +27,7 @@ public class ClassTracker extends MemoryTracker {
 
   private final String classname;
   private final int bytes;
+  private final Options options;
 
   protected final ClassStats overall_stats;
 
@@ -38,24 +39,34 @@ public class ClassTracker extends MemoryTracker {
   static ClassTracker newClassTracker(
       String classname,
       int bytes,
-      boolean has_size,
-      boolean has_capacity) {
-    if ((Configure.CAPTURE_SIZE ||
-          Configure.SUMMARY_SIZE) &&
-        (has_size || has_capacity)) {
-      return new PlusSize(classname, bytes);
+      Options options) {
+    boolean plus_size = 
+      (options.isSizeEnabled() ||
+       options.isCapacityEnabled());
+    boolean plus_sample = 
+      (options.getSampleRatio() < 1.0);
+
+    if (plus_size) {
+      if (plus_sample) {
+        return new PlusSizeSample(classname, bytes, options);
+      } else {
+        return new PlusSize(classname, bytes, options);
+      }
+    } else if (plus_sample) {
+      return new PlusSample(classname, bytes, options);
     } else {
-      return new ClassTracker(classname, bytes);
+      return new ClassTracker(classname, bytes, options);
     }
   }
 
-  private ClassTracker(String classname, int bytes) {
+  private ClassTracker(String classname, int bytes, Options options) {
     this.classname = classname;
     this.bytes = bytes;
+    this.options = options;
     this.overall_stats = newClassStats();
   }
 
-  /** @return class that's being tracked */
+  /** @return name of profiled class */
   public final String getClassName() {
     return classname;
   }
@@ -63,6 +74,11 @@ public class ClassTracker extends MemoryTracker {
   /** @return estimated object size in bytes */
   public final int getObjectSize() {
     return bytes;
+  }
+
+  /** @return profiling options */
+  public final Options getOptions() {
+    return options;
   }
 
   /** @return summary statistics */
@@ -103,7 +119,8 @@ public class ClassTracker extends MemoryTracker {
     updateNow(false);
   }
   public void add(Object new_o) {
-    InstanceStats new_is = newInstanceStats(new_o);
+    InstanceStats new_is = 
+      InstanceStats.newInstanceStats(new_o, options);
     synchronized (lock) {
       if (objs == null) {
         objs = new InstancesTable() {
@@ -121,15 +138,6 @@ public class ClassTracker extends MemoryTracker {
 
   protected ClassStats newClassStats() {
     return ClassStats.newClassStats(false);
-  }
-  protected InstanceStats newInstanceStats(Object new_o) {
-    return
-      InstanceStats.newInstanceStats(
-          new_o,
-          Configure.CAPTURE_TIME,
-          Configure.CAPTURE_STACK,
-          Configure.CAPTURE_SIZE,
-          Configure.CAPTURE_CONTEXT);
   }
   protected void updateInstanceStats(InstanceStats current) {
     String agent = current.getAgentName();
@@ -207,36 +215,15 @@ public class ClassTracker extends MemoryTracker {
 
   // impl with fields for size and capacity
   private static class PlusSize extends ClassTracker {
-    public PlusSize(String classname, int bytes) {
-      super(classname, bytes);
+    public PlusSize(String classname, int bytes, Options options) {
+      super(classname, bytes, options);
     }
 
     protected void updateInstanceStats(InstanceStats current) {
-      // update the entry
-      current.update();
-
-      long size;
-      long capacity_count;
-      long capacity_bytes;
-      long max_size;
-      long max_capacity_count;
-      long max_capacity_bytes;
-
-      if (Configure.CAPTURE_SIZE) {
-        size = (long) current.getSize();
-        capacity_count = (long) current.getCapacityCount();
-        capacity_bytes = (long) current.getCapacityBytes();
-        max_size = (long) current.getMaximumSize();
-        max_capacity_count = (long) current.getMaximumCapacityCount();
-        max_capacity_bytes = (long) current.getMaximumCapacityBytes();
-      } else {
-        size = (long) current.currentSize();
-        capacity_count = (long) current.currentCapacityCount();
-        capacity_bytes = (long) current.currentCapacityBytes();
-        max_size = size;
-        max_capacity_count = capacity_count;
-        max_capacity_bytes = capacity_bytes;
-      }
+      // get the current size/capacity values
+      long size = (long) current.currentSize();
+      long capacity_count = (long) current.currentCapacityCount();
+      long capacity_bytes = (long) current.currentCapacityBytes();
 
       String agent = current.getAgentName();
       if (agent != null) {
@@ -248,27 +235,51 @@ public class ClassTracker extends MemoryTracker {
           cs = newClassStats();
           agents.put(agent, cs);
         }
-        // We could increment a counter every time a collection is created,
-        // but this would require to lookup the subject information.
+        // We could increment a counter every time a collection is
+        // created, but this would require us to lookup the subject
+        // information.
         cs.allocate(current);
-        cs.update(
-            size,
-            capacity_count,
-            capacity_bytes,
-            max_size,
-            max_capacity_count,
-            max_capacity_bytes);
+        cs.update(size, capacity_count, capacity_bytes);
       }
-      overall_stats.update(
-            size,
-            capacity_count,
-            capacity_bytes,
-            max_size,
-            max_capacity_count,
-            max_capacity_bytes);
+      overall_stats.update(size, capacity_count, capacity_bytes);
     }
     protected ClassStats newClassStats() {
       return ClassStats.newClassStats(true);
+    }
+  }
+  
+  // impl with random sampling support
+  private static class PlusSample extends ClassTracker {
+    private final double sample;
+    private final Random random = new Random();
+    public PlusSample(
+        String classname, int bytes, Options options) {
+      super(classname, bytes, options);
+      this.sample = options.getSampleRatio();
+    }
+    public void add(Object new_o) {
+      if (random.nextDouble() <= sample) {
+        super.add(new_o);
+      }
+    }
+  }
+
+  // impl with random sampling support and size/capacity
+  //
+  // this is cut-n-paste of the above "PlusSample" impl, but
+  // required to get the right behavior with minimal overhead. 
+  private static class PlusSizeSample extends PlusSize {
+    private final double sample;
+    private final Random random = new Random();
+    public PlusSizeSample(
+        String classname, int bytes, Options options) {
+      super(classname, bytes, options);
+      this.sample = options.getSampleRatio();
+    }
+    public void add(Object new_o) {
+      if (random.nextDouble() <= sample) {
+        super.add(new_o);
+      }
     }
   }
 }

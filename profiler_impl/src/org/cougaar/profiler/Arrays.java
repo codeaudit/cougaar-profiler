@@ -33,7 +33,17 @@ public final class Arrays {
   private static final int HEADER = 12;
 
   // does InstanceStats support arrays yet?
-  private static final boolean LENGTH = false;
+  private static final boolean LENGTH = true;
+
+  private static final Options OPTIONS = 
+    new Options(
+        false,  // time
+        false,  // stack
+        false,  // size
+        LENGTH, // capacity
+        false,  // context
+        0.01    // sampleRatio
+        );
 
   private Arrays() { }
 
@@ -66,8 +76,7 @@ public final class Arrays {
        cat <<EOF
 
        public static final MemoryTracker ${P} =
-         MemoryTracker.getInstance(
-             "${T}[]", HEADER, false, LENGTH);
+         MemoryTracker.getInstance("${T}[]", HEADER, OPTIONS);
        public static final void new${T}array(${T}[] a) {
          ${P}.add(a);
        }
@@ -80,8 +89,7 @@ public final class Arrays {
      done 
    */
   public static final MemoryTracker BOOLEAN_ARRAYS =
-    MemoryTracker.getInstance(
-        "boolean[]", HEADER, false, LENGTH);
+    MemoryTracker.getInstance("boolean[]", HEADER, OPTIONS);
   public static final void newbooleanarray(boolean[] a) {
     BOOLEAN_ARRAYS.add(a);
   }
@@ -92,8 +100,7 @@ public final class Arrays {
   }
 
   public static final MemoryTracker BYTE_ARRAYS =
-    MemoryTracker.getInstance(
-        "byte[]", HEADER, false, LENGTH);
+    MemoryTracker.getInstance("byte[]", HEADER, OPTIONS);
   public static final void newbytearray(byte[] a) {
     BYTE_ARRAYS.add(a);
   }
@@ -104,8 +111,7 @@ public final class Arrays {
   }
 
   public static final MemoryTracker CHAR_ARRAYS =
-    MemoryTracker.getInstance(
-        "char[]", HEADER, false, LENGTH);
+    MemoryTracker.getInstance("char[]", HEADER, OPTIONS);
   public static final void newchararray(char[] a) {
     CHAR_ARRAYS.add(a);
   }
@@ -116,8 +122,7 @@ public final class Arrays {
   }
 
   public static final MemoryTracker SHORT_ARRAYS =
-    MemoryTracker.getInstance(
-        "short[]", HEADER, false, LENGTH);
+    MemoryTracker.getInstance("short[]", HEADER, OPTIONS);
   public static final void newshortarray(short[] a) {
     SHORT_ARRAYS.add(a);
   }
@@ -128,8 +133,7 @@ public final class Arrays {
   }
 
   public static final MemoryTracker INT_ARRAYS =
-    MemoryTracker.getInstance(
-        "int[]", HEADER, false, LENGTH);
+    MemoryTracker.getInstance("int[]", HEADER, OPTIONS);
   public static final void newintarray(int[] a) {
     INT_ARRAYS.add(a);
   }
@@ -140,8 +144,7 @@ public final class Arrays {
   }
 
   public static final MemoryTracker FLOAT_ARRAYS =
-    MemoryTracker.getInstance(
-        "float[]", HEADER, false, LENGTH);
+    MemoryTracker.getInstance("float[]", HEADER, OPTIONS);
   public static final void newfloatarray(float[] a) {
     FLOAT_ARRAYS.add(a);
   }
@@ -152,8 +155,7 @@ public final class Arrays {
   }
 
   public static final MemoryTracker DOUBLE_ARRAYS =
-    MemoryTracker.getInstance(
-        "double[]", HEADER, false, LENGTH);
+    MemoryTracker.getInstance("double[]", HEADER, OPTIONS);
   public static final void newdoublearray(double[] a) {
     DOUBLE_ARRAYS.add(a);
   }
@@ -164,8 +166,7 @@ public final class Arrays {
   }
 
   public static final MemoryTracker LONG_ARRAYS =
-    MemoryTracker.getInstance(
-        "long[]", HEADER, false, LENGTH);
+    MemoryTracker.getInstance("long[]", HEADER, OPTIONS);
   public static final void newlongarray(long[] a) {
     LONG_ARRAYS.add(a);
   }
@@ -176,8 +177,7 @@ public final class Arrays {
   }
 
   public static final MemoryTracker OBJECT_ARRAYS =
-    MemoryTracker.getInstance(
-        "Object[]", HEADER, false, LENGTH);
+    MemoryTracker.getInstance("Object[]", HEADER, OPTIONS);
   public static final void newObjectarray(Object[] a) {
     OBJECT_ARRAYS.add(a);
   }

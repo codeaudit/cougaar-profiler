@@ -21,32 +21,9 @@
 package org.cougaar.profiler;
 
 /**
- * Configuration options.
- * <p> 
- * We can't set these via system properties, since we may want to
- * profile "java.util.Properties" and would run into a stack
- * overflow error.
+ * Internal configuration options.
  */
 interface Configure {
-
-  /**
-   * Disable all instance details to minimize CPU and memory
-   * overhead.
-   * <p>
-   * This is equivalent to setting:<pre>
-   *   boolean CAPTURE_TIME = false;
-   *   boolean CAPTURE_STACK = false;
-   *   boolean CAPTURE_SIZE = false;
-   *   boolean CAPTURE_CONTEXT = false;
-   * </pre>
-   */
-  boolean MIN_OVERHEAD = false;
-
-  /**
-   * Capture overall size/capacity metrics on a per-class basis,
-   * even if CAPTURE_SIZE is false.
-   */
-  boolean SUMMARY_SIZE = true;
 
   /**
    * Context data is disabled since we may want to profile
@@ -71,42 +48,16 @@ interface Configure {
    */
   boolean CAN_CAPTURE_CONTEXT = false;
 
-  // see InstanceStats for memory cost estimates 
-
   /**
-   * Capture per-instance allocation timestamp.
-   * <p> 
-   * Costs 8 bytes per profiled instance.
-   * Invokes "System.currentTimeMillis()".
-   */ 
-  boolean CAPTURE_TIME = (true && !MIN_OVERHEAD);
-
-  /**
-   * Capture per-instance allocation stacktrace.
+   * InstanceStats size/capacity methods should lookup the
+   * current value, as opposed to returning zero.
    * <p>
-   * Cost estimates (in bytes) for a stack with N elements:<pre>
-   *   initial:    32 + 4*N
-   *   resolved:   44 + 24*N
-   * </pre>
-   * Invokes "new Throwable()".
-   */ 
-  boolean CAPTURE_STACK = (true && !MIN_OVERHEAD);
-
-  /**
-   * Capture per-instance size and capacity metrics.
-   * <p> 
-   * Costs 24 bytes per profiled instance.
-   * Periodically invokes Size and Capacity methods.
-   */ 
-  boolean CAPTURE_SIZE = (true && !MIN_OVERHEAD);
-
-  /**
-   * Capture per-instance allocation "agent" context.
-   * <p>
-   * Costs about 80+ bytes, depending upon security context.
-   * Invokes "AccessController.getContext()".
+   * This is usually fine, except that Comparators should save the
+   * value first <i>before</i> sorting to avoid concurrent changes.
+   * A concurrent change won't throw an exception but may result in
+   * a bad sort order.
    */
-  boolean CAPTURE_CONTEXT = (true && CAN_CAPTURE_CONTEXT && !MIN_OVERHEAD);
+  boolean SHOW_CURRENT_SIZE = true;
 
   /**
    * MemoryStatsImpl singleton resolution delay in milliseconds.
@@ -119,12 +70,24 @@ interface Configure {
   long DELAY_AFTER_STARTUP = 500;
 
   /**
-   * Period for InstancesTable cleanup thread.
+   * Period for MemoryStatsImpl cleanup thread.
    * <p>
-   * The InstancesTable cleans a bit of itself every time an
-   * instance is added.  This thread periodically cleans the
-   * entire table in case it hasn't been accessed in a while.
+   * Each ClassTracker's InstancesTable cleans a bit of itself every
+   * time an instance is added.  This thread periodically cleans the
+   * entire table in case it hasn't been accessed in a while.  If
+   * this thread is disabled then the stats and GC may be delay
+   * until UI update.
    */
-  int UPDATE_STATS_FREQUENCY = 2 * 60 * 1000;
+  int UPDATE_FREQUENCY = 2 * 60 * 1000;
+
+  /**
+   * Rehash factor for InstancesTable capacity.
+   * <p>
+   * This is the average bucket size for the InstanceTable.  If the
+   * table size outgrows this factor then the table will be rehashed.
+   * The factor also controls the table's self-clean, where every
+   * "put" scans the other entries in the bucket for GC.
+   */
+  int REHASH_FACTOR = 7;
 
 }

@@ -187,11 +187,8 @@ public class SimpleTest {
         "\n    toString:           "+str+
         "\n    hashcode:           "+Integer.toHexString(hc)+
         "\n    size:               "+is.getSize()+
-        "\n    max_size:           "+is.getMaximumSize()+
         "\n    capacity_count:     "+is.getCapacityCount()+
-        "\n    max_capacity_count: "+is.getMaximumCapacityCount()+
         "\n    capacity_bytes:     "+is.getCapacityBytes()+
-        "\n    max_capacity_bytes: "+is.getMaximumCapacityBytes()+
         "\n    agent:              "+is.getAgentName()+
         "\n    ");
     printStack(is.getThrowable(), maxStackLines);

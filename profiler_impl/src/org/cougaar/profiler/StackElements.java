@@ -27,6 +27,7 @@ package org.cougaar.profiler;
 public final class StackElements {
 
   private final Throwable throwable;
+  private StackTraceElement[] elements;
   private int _hc;
 
   public StackElements(Throwable throwable) {
@@ -40,10 +41,18 @@ public final class StackElements {
     return throwable;
   }
 
+  private StackTraceElement[] getStackTrace() {
+    // cache the array, otherwise each access is a clone
+    if (elements == null) {
+      elements = throwable.getStackTrace();
+    }
+    return elements;
+  }
+
   public int hashCode() {
     if (_hc == 0) {
       _hc = 1;
-      StackTraceElement[] st = throwable.getStackTrace();
+      StackTraceElement[] st = getStackTrace();
       for (int i = 0, n = st.length; i < n; i++) {
         _hc = 31*_hc + st[i].hashCode();
       }
@@ -57,9 +66,8 @@ public final class StackElements {
     } else if (!(o instanceof StackElements)) {
       return false;
     }
-    StackTraceElement[] a_st = throwable.getStackTrace();
-    StackTraceElement[] b_st =
-      ((StackElements) o).throwable.getStackTrace();
+    StackTraceElement[] a_st = getStackTrace();
+    StackTraceElement[] b_st = ((StackElements) o).getStackTrace();
     if (a_st.length != b_st.length) {
       return false;
     }

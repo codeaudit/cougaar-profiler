@@ -79,10 +79,7 @@ public class ClassStats {
   void update(
       long size,
       long capacityCount,
-      long capacityBytes,
-      long maxSize,
-      long maxCapacityCount,
-      long maxCapacityBytes) {
+      long capacityBytes) {
   }
 
   // allocate/gc an instance.  We pass the instance stats to allow
@@ -169,29 +166,26 @@ public class ClassStats {
     void update(
         long size,
         long capacityCount,
-        long capacityBytes,
-        long maxSize,
-        long maxCapacityCount,
-        long maxCapacityBytes) {
+        long capacityBytes) {
       sumSize += size;
-      if (this.maxSize < maxSize) {
-        this.maxSize = maxSize;
-        if (maxEverSize < maxSize) {
-          maxEverSize = maxSize;
+      if (maxSize < size) {
+        maxSize = size;
+        if (maxEverSize < size) {
+          maxEverSize = size;
         }
       }
       sumCapacityCount += capacityCount;
-      if (this.maxCapacityCount < maxCapacityCount) {
-        this.maxCapacityCount = maxCapacityCount;
-        if (maxEverCapacityCount < maxCapacityCount) {
-          maxEverCapacityCount = maxCapacityCount;
+      if (maxCapacityCount < capacityCount) {
+        maxCapacityCount = capacityCount;
+        if (maxEverCapacityCount < capacityCount) {
+          maxEverCapacityCount = capacityCount;
         }
       }
       sumCapacityBytes += capacityBytes;
-      if (this.maxCapacityBytes < maxCapacityBytes) {
-        this.maxCapacityBytes = maxCapacityBytes;
-        if (maxEverCapacityBytes < maxCapacityBytes) {
-          maxEverCapacityBytes = maxCapacityBytes;
+      if (maxCapacityBytes < capacityBytes) {
+        maxCapacityBytes = capacityBytes;
+        if (maxEverCapacityBytes < capacityBytes) {
+          maxEverCapacityBytes = capacityBytes;
         }
       }
     }
