@@ -80,7 +80,7 @@ for x in $JDK_MODULES; do
   # also consider inner classes, e.g.
   #   java/util/HashMap\$Entry.class
   FILTER="java/$x/*"
-  $TRANSFORM jdk $x $FILTER || exit -1
+  $TRANSFORM java${x}patch $FILTER || exit -1
 done
 
 # transform Cougaar modules
@@ -88,7 +88,7 @@ for x in $COUGAAR_MODULES; do
   # replace this with a more selective filter, e.g.
   #   FILTER=org/cougaar/core/blackboard
   FILTER=""
-  $TRANSFORM cougaar $x $FILTER || exit -1
+  $TRANSFORM $x $FILTER || exit -1
 done
 
 cat << EOF
