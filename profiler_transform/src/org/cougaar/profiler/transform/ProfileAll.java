@@ -23,7 +23,7 @@ package org.cougaar.profiler.transform;
 import java.io.OutputStream;
 
 /**
- * Recursively finds class files and runs the AddProfiler class
+ * Recursively finds class files and runs the SelfProfiler class
  * modifier.
  *
  * @see FindAndModify options
@@ -34,9 +34,15 @@ public class ProfileAll extends FindAndModify {
     (new ProfileAll()).run(args);
   }
 
+  private SelfProfiler transform;
+
+  protected boolean configure(String[] args) {
+    transform = new SelfProfiler(args);
+    return true;
+  }
+
   protected void modifyFile(
-      String filename,
-      OutputStream os) throws Exception {
-    AddProfiler.modifyClass(filename, null, os);
+      String file_name, OutputStream out) throws Exception {
+    transform.modifyClassToStream(file_name, null, out);
   }
 }

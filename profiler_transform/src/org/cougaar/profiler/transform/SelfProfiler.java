@@ -24,8 +24,11 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.PrintStream;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Set;
 import org.apache.bcel.Constants; // inlined
 import org.apache.bcel.Repository;
 import org.apache.bcel.classfile.ClassParser;
@@ -59,71 +62,110 @@ import org.apache.bcel.generic.Type;
 
 /**
  * Read in a class file and add instructions to record every
- * instance allocation.
+ * instance allocation of the class.
  * <p>
- * The basic idea is to transform a class like:<pre>
- *   public class Bar extends Foo {
- *     public Bar() {
- *       System.out.println("Hello, world!");
- *     }
- *   }
- * </pre>
- * to:<pre>
- *   import org.cougaar.profiler.MemoryTracker;
- *   public class Bar extends Foo {
- *     public Bar() {
- *       System.out.println("Hello, world!");
- *       MY_PROFILER.add(this);
- *     }
- *     private static final MemoryTracker MY_PROFILER =
- *       MemoryTracker.getInstance("Bar");
- *   }
- * </pre>
- * The full transform is more complex, since we must allow
- * for "clone()" and "readObject()".  We must also subclassing,
- * for example, if "Foo" is profiled, we don't want
- * to count Bar in Foo's metrics.  We add a serialVersionUID
- * if necessary to preserve serialization compatibility.
- * Lastly, we also tell the MemoryTracker the estimated object
- * size (based upon field count) and support custom "size()"
- * and "capacity()" methods.
+ * The class tracks it<i>self</i> by calling the profiler
+ * in all of its own constructor/clone/readObject methods.
+ * Any allocation of this class by any class in the VM will
+ * be tracked.
+ * <p>
+ * For details see
+ * <a href="http://profiler.cougaar.org">http://profiler.cougaar.org</a>.
  */
-public class AddProfiler {
+public class SelfProfiler {
+
+  private static void usage() {
+    System.err.println(
+        "Usage: SelfProfiler [OPTION..] FILE\n"+
+        "\n"+
+        "  --this=BOOLEAN      profile this class (default is true)\n"+
+        "  --arrays=BOOLEAN    profile array allocations (default is false)\n"+
+        "\n"+
+        "  --config=STRING     class name of Options factory class (default is\n"+
+        "                      \"org.cougaar.profiler.DefaultOptionsFactory\")\n"+
+        "\n"+
+        "  --module=STRING     optional \"module\" name that will be passed to\n"+
+        "                      the Options factory method (default is null)\n"+
+        "\n"+
+        "  --clinit=BOOLEAN    initialize the profiler field in the static\n"+
+        "                      class init as opposed to the first alloc\n"+
+        "                      (default is true)\n"+
+        "  --size=BOOLEAN      capture size (default is true)\n"+
+        "  --capacity=BOOLEAN  capture capacity (default is true)\n"+
+        "  --uid=BOOLEAN       ensure serialVersionUID (default is true)\n"+
+        "\n"+
+        "  --help              print this help message and exit\n"+
+        "\n"+
+        "  FILE                input file, or - for STDIN\n"+
+      "\n"+
+      "Reads a Java class file and outputs a new class\n"+
+      "file with added profiler calls.\n"+
+      "\n"+
+      "The above options factory class must look something like:\n"+
+      "  package com.foo;\n"+
+      "  import org.cougaar.profiler.Options;\n"+
+      "  public class MyConfig {\n"+
+      "    public static final Options getOptions(\n"+
+      "      String module, String classname) {..}\n"+
+      "  }\n"+
+      "This will control the level of profiling.  For details see\n"+
+      "the default implementation in the profiler source:\n"+
+      "  org/cougaar/profiler/DefaultOptionsFactory.java\n"+
+      "\n"+
+      "Example usage:\n"+
+      "  cat Bar.class |\\\n"+
+      "    java -classpath bcel-5.1.jar:.\\\n"+
+      "    SelfProfiler\\\n"+
+      "    --config=com.foo.MyConfig\\\n"+
+      "    --module=whatever\\\n"+
+      "    -\\\n"+
+      "    > tmp/Bar.class\n"+
+      "\n"+
+      "Also see the ProfileAll class to modify more than\n"+
+      "one class using `find`");
+  }
 
   /**
    * MemoryTracker API constants.
    * <p>
-   * The API should look like:<pre>
+   * The API must look like:<pre>
    *   package org.cougaar.profiler;
    *   public class MemoryTracker {
-   *     // on instance allocation:
+   *     public static MemoryTracker getInstance(
+   *         String type, int bytesEach, Options options) {..}
    *     public void add(Object o) {..}
-   *
-   *     // methods to get a tracker:
-   *     public static MemoryTracker getInstance(
-   *         String type,
-   *         int bytes) {..}
-   *     public static MemoryTracker getInstance(
-   *         String type,
-   *         int bytes,
-   *         boolean has_size,
-   *         boolean has_capacity) {..}
    *   }
-   *   public interface Size {
-   *     public int $get_size();
-   *   }
-   *   public interface Capacity {
-   *     public int $get_capacity();
-   *     public int $get_capacity_bytes();
+   *   public class Options {
+   *     public Options mask(boolean size, boolean capacity) {..}
    *   }
    * </pre>
    */
   private static final String MEMORY_TRACKER_CLASS =
     "org.cougaar.profiler.MemoryTracker";
-  private static final String GET_TRACKER_INSTANCE =
+  private static final String GET_INSTANCE_METHOD =
     "getInstance";
-  private static final String ADD_TO_TRACKER =
+  private static final String ADD_METHOD =
     "add";
+  private static final String OPTIONS_CLASS =
+    "org.cougaar.profiler.Options";
+  private static final String MASK_METHOD =
+    "mask";
+
+  /**
+   * Options factory API constants.
+   * <p>
+   * The API must look like:<pre>
+   *   import org.cougaar.profiler.Options;
+   *   public class Whatever {
+   *     public static Options getOptions(
+   *       String module, String classname) {..}
+   *   }
+   * </pre> 
+   */
+  private static final String DEFAULT_CONFIG =
+    "org.cougaar.profiler.DefaultOptionsFactory";
+  private static final String GET_OPTIONS_METHOD =
+    "getOptions";
 
   /**
    * Optional methods to access object size and array lengths.
@@ -136,7 +178,7 @@ public class AddProfiler {
    *     public int $get_size() {
    *       return size;
    *     }
-   *     public int $get_capacity() {
+   *     public int $get_capacity_count() {
    *       Object[] buf = elementData;
    *       return (buf == null ? 0 : buf.length);
    *     }..
@@ -149,13 +191,22 @@ public class AddProfiler {
    * This is generalized for any class.  The "$get_size" method is
    * added if there's an int field named:<pre>
    *   size / elementCount / count
-   * </pre>  The "$get_capacity" method is added if the class or its
-   * parents contain non-static arrays.  "$get_capacity_bytes"
+   * </pre>  The "$get_capacity_*" methods are added if the class or
+   * its parents contain non-static arrays.  "$get_capacity_bytes"
    * multiplies each array by its element byte size and adds the
    * array header size.
+   * <p>
+   * The API must look like:<pre>
+   *   package org.cougaar.profiler;
+   *   public interface Size {
+   *     public int $get_size();
+   *   }
+   *   public interface Capacity {
+   *     public int $get_capacity_count();
+   *     public int $get_capacity_bytes();
+   *   }
+   * </pre>
    */
-  // RFE: maybe make this a command-line option
-  private static final boolean ENABLE_SIZE_AND_CAPACITY = true;
   private static final String SIZE_METHOD =
     "$get_size";
   private static final String CAPACITY_COUNT_METHOD =
@@ -167,8 +218,6 @@ public class AddProfiler {
   private static final String CAPACITY_CLASS =
     "org.cougaar.profiler.Capacity";
 
-  // RFE: convert "newarray" to "org.cougaar.profiler.Arrays"?
-
   /**
    * The name of our static profiler field and profiling
    * method.
@@ -178,8 +227,37 @@ public class AddProfiler {
   private static final String PROFILE_METHOD_PREFIX =
     "$profile_";
 
-  // add "serialVersionUID" if it's missing
-  private static final boolean ENSURE_SERIAL_VERSION_UID = true;
+  /**
+   * Exclude "java.lang" classes used by the profiler.
+   * <p>
+   * "Class.class" could be transformed but at runtime there are
+   * no allocations -- it must be a VM trick.
+   * <p>
+   * The string comparator is an odd case since it's statically
+   * initialized in String.  It's easiest to ignore it since it's
+   * a singleton anyways.
+   */ 
+  private static final Set JAVA_LANG_EXCLUDE =
+    new HashSet(Arrays.asList(new String[] {
+      "java.lang.Class",
+      "java.lang.Object",
+      "java.lang.String$CaseInsensitiveComparator",
+      "java.lang.ThreadGroup",
+      "java.lang.Throwable",
+      "java.lang.ref.Reference",
+      "java.lang.ref.SoftReference",
+      "java.lang.ref.WeakReference",
+    }));
+
+  // options and their defaults
+  private boolean trackThis = true;
+  private boolean trackArrays = false;
+  private String config = DEFAULT_CONFIG;
+  private String module = null;
+  private boolean enableSize = true;
+  private boolean enableCapacity = true;
+  private boolean staticInit = true;
+  private boolean ensureUID = true;
 
   private String class_name;
   private String super_name;
@@ -194,87 +272,144 @@ public class AddProfiler {
   private boolean has_size;
   private boolean has_capacity;
 
-  public static void main(String[] argv) throws Exception {
-    if (argv.length == 0) {
-      System.err.println(
-          "Usage: AddProfiler [-|FILE]\n"+
-          "\n"+
-          "Reads a Java class file, outputs a new class\n"+
-          "file with added MemoryTracker calls.  If \"-\"\n"+
-          "is specified then STDIN is used.\n"+
-          "\n"+
-          "Example usage:\n"+
-          "  cat Bar.class |\\\n"+
-          "    java -classpath bcel-5.1.jar:.\\\n"+
-          "    AddProfiler -\\\n"+
-          "    > tmp/Bar.class\n"+
-          "\n"+
-          "Also see the ProfileAll class to modify more than\n"+
-          "one class using `find`");
+  public static void main(String[] args) throws Exception {
+    int n = args.length;
+    if (n == 0 || args[0].equals("--help")) {
+      usage();
       return;
     }
 
-    String name = argv[0];
-    modifyClass(
-        name,
-        System.in,
-        System.out);
-  }
+    String file_name = args[args.length-1];
+    InputStream in = System.in;
+    OutputStream out = System.out;
 
-  public static void modifyClass(
-      String name,
-      InputStream in,
-      OutputStream out) throws Exception {
-    JavaClass java_class;
-    if ("-".equals(name)) {
-      java_class = new ClassParser(in, "-").parse();
+    String[] options;
+    int shift = -1;
+    n -= Math.abs(shift);
+    if (n <= 0) {
+      options = null;
     } else {
-      if ((java_class = Repository.lookupClass(name)) == null) {
-        // may throw IOException
-        java_class = new ClassParser(name).parse();
+      options = new String[n];
+      for (int i = 0; i < n; i++) {
+        options[i] = args[shift+i];
       }
     }
 
-    AddProfiler addprofiler = new AddProfiler();
-    JavaClass new_java_class = addprofiler.modifyClass(java_class);
+    SelfProfiler transform = new SelfProfiler(options);
+
+    transform.modifyClassToStream(file_name, in, out);
+  }
+
+  public SelfProfiler() {
+    this(null);
+  }
+
+  public SelfProfiler(String[] args) {
+    if (!parseOptions(args)) {
+      String s = "Arguments: "+Arrays.asList(args);
+      System.err.println(s+"\n");
+      usage();
+      throw new RuntimeException(s);
+    }
+  }
+
+  private boolean parseOptions(String[] args) {
+    int n = (args == null ? 0 : args.length);
+    for (int i = 0; i < n; i++) {
+      String s = args[i];
+      if (!s.startsWith("--")) {
+        return false;
+      }
+      int j = s.indexOf('=');
+      if (j < 0) {
+        return false;
+      }
+      String key = s.substring(2, j);
+      String value = s.substring(j+1);
+      if (key.equals("this")) {
+        trackThis = "true".equals(value);
+      } else if (key.equals("arrays")) {
+        trackArrays = "true".equals(value);
+      } else if (key.equals("config")) {
+        if (value == null || value.length() == 0) {
+          System.err.println("Must specify "+key+" class");
+          return false;
+        }
+        config = value;
+      } else if (key.equals("module")) {
+        module = value;
+      } else if (key.equals("clinit")) {
+        staticInit = "true".equals(value);
+      } else if (key.equals("size")) {
+        enableSize = "true".equals(value);
+      } else if (key.equals("capacity")) {
+        enableCapacity = "true".equals(value);
+      } else if (key.equals("uid")) {
+        ensureUID = "true".equals(value);
+      } else {
+        System.err.println("Unknown option: "+s);
+        return false;
+      }
+    }
+    return true;
+  }
+
+  public void modifyClassToStream(
+      String file_name,
+      InputStream in,
+      OutputStream out) {
+    // load clazz
+    JavaClass clazz;
+    try {
+      if ("-".equals(file_name)) {
+        clazz = new ClassParser(in, "-").parse();
+      } else {
+        clazz = new ClassParser(file_name).parse();
+      }
+    } catch (Exception e) {
+      throw new RuntimeException(
+          "Unable to parse file \""+file_name+"\"", e);
+    }
+
+    // transform
+    JavaClass new_clazz = modifyClass(clazz);
 
     // pretty printer:
-    //BCELifier bcelifier = new BCELifier(new_java_class, System.out);
+    //BCELifier bcelifier = new BCELifier(new_clazz, System.out);
     //bcelifier.start();
 
     // raw ".class" output:
-    new_java_class.dump(out);
+    try {
+      new_clazz.dump(out);
+    } catch (Exception e) {
+      throw new RuntimeException(
+          "Unable to write class \""+file_name+"\" to stream", e);
+    }
   }
-
-  public AddProfiler() { }
 
   /**
    * See org.apache.bcel.util.ClassLoader for dynamic modification.
-   *
-   * Code outline for ClassLoader:
-   *   protected Class loadClass(..) {..
-   *     if (class_name matches something we're interested in) {
-   *       JavaClazz clazz = null;
-   *       if ((clazz = repository.loadClass(class_name)) != null) {
-   *         clazz = (new AddProfiler()).modifyClass(clazz);
-   *       } ..
-   *       if (clazz != null) {
-   *	     byte[] bytes  = clazz.getBytes();
-   *         cl = defineClass(class_name, bytes, 0, bytes.length);
-   *       }..
-   *     }..
+   * <p>
+   * Your subclass of the BCEL ClassLoader would do something like:
+   * <pre>
+   *   private static final String[] options = null; // options
+   *   private final SelfProfiler transform = new SelfProfiler(options);
+   *   protected synchronized JavaClass modifyClass(JavaClass clazz) {
+   *     if (!(we care about this class)) {
+   *       return clazz;
+   *     }
+   *     return transform.modifyClass(clazz);
    *   }
-   * This adds a slight runtime overhead, plus might have security
-   * problems.
+   * </pre>
+   * This adds a runtime overhead and potential security issues.
+   * Also, it won't work on JDK-internal classes (e.g. String).
    */
   public JavaClass modifyClass(JavaClass clazz) {
-    if (clazz.isInterface()) {
-      // we only track objects
+    if (isExcluded(clazz)) {
       return clazz;
     }
     setClassNames(clazz);
-    if (hasProfilerField(clazz)) {
-      // already modified
+    if (alreadyModified(clazz)) {
       return clazz;
     }
     createClassGen(clazz);
@@ -282,6 +417,38 @@ public class AddProfiler {
     JavaClass ret = cg.getJavaClass();
     reset();
     return ret;
+  }
+
+  private boolean isExcluded(JavaClass clazz) {
+    if (clazz.isInterface()) {
+      // we only track objects
+      return true; 
+    }
+    String s = clazz.getClassName();
+    if (s.startsWith("java.lang.") &&
+        JAVA_LANG_EXCLUDE.contains(s)) {
+      // exclude classes required by profiler
+      //
+      // some of JDK rt.jar's "sun.*" may also belong here
+      System.err.println("  excluding: "+s);
+      return true; 
+    }
+    return false;
+  }
+
+  private boolean isStaticInit() {
+    // must delay init of java.lang profiler field, otherwise
+    // the VM will throw an initialization error.
+    //
+    // this really isn't a big deal, since we'll set the
+    // profiler field on the first alloc.  We'd simply prefer
+    // to set the field as a "final" in the clinit.
+    //
+    // this could probably be trimmed to a smaller subset of
+    // "java.lang.*"
+    return
+      (staticInit &&
+       !class_name.startsWith("java.lang."));
   }
 
   private void setClassNames(JavaClass clazz) {
@@ -296,8 +463,9 @@ public class AddProfiler {
     // it before we modify the class
     isSerial = isSerializable(clazz);
     newSerialVer =
-      (isSerial ? computeSerialVersionUID(clazz) : -1);
-
+      (isSerial && ensureUID ?
+       computeSerialVersionUID(clazz) :
+       -1);
     supers = clazz.getSuperClasses();
     cg = new ClassGen(clazz);
     cp = cg.getConstantPool();
@@ -324,38 +492,43 @@ public class AddProfiler {
     // break serialization
     addSerialVersionUID();
 
-    if (ENABLE_SIZE_AND_CAPACITY) {
+    if (trackThis) {
       // add "$get_size()" and "$get_capacity()" methods
       defineSize();
       defineCapacity();
+
+      // add static profiler field
+      defineProfilerField();
+
+      // init profiler field in class init method
+      initProfilerField();
+
+      // override "profile_<super>" method to disable super's profiler
+      disableSuperProfiler();
+
+      // add our "profile_<class>" method
+      addClassProfiler();
+
+      // update constructors with "profile_<class>" calls
+      // (excluding constructors that call "this(..)")
+      //
+      // note that the default constructor always exists
+      callProfilerInConstructors();
+
+      // catch "readObject", which is a hidden constructor.
+      //
+      // we can ignore "readExternal" since it calls the no-arg
+      // constructor.
+      callProfilerInReadObject();
+
+      // handle "clone", which is yet another hidden constructor.
+      callProfilerInClone();
     }
 
-    // add static profiler field
-    defineProfilerField();
-
-    // init profiler field in class init method
-    initProfilerField();
-
-    // override "profile_<super>" method to disable super's profiler
-    disableSuperProfiler();
-
-    // add our "profile_<class>" method
-    addClassProfiler();
-
-    // update constructors with "profile_<class>" calls
-    // (excluding constructors that call "this(..)")
-    //
-    // note that the default constructor always exists
-    callProfilerInConstructors();
-
-    // catch "readObject", which is a hidden constructor.
-    //
-    // we can ignore "readExternal" since it calls the no-arg
-    // constructor.
-    callProfilerInReadObject();
-
-    // handle "clone", which is yet another hidden constructor.
-    callProfilerInClone();
+    if (trackArrays) {
+      // record all "newarray" instructions
+      recordArraysAllocations();
+    }
   }
 
   private static String encode(String s) {
@@ -394,20 +567,17 @@ public class AddProfiler {
   // Bytecode editting, mostly based upon BCELifier output:
   //
 
-  private boolean hasProfilerField(JavaClass clazz) {
+  private boolean alreadyModified(JavaClass clazz) {
     // look for:
-    //   private static final MemoryTracker $PROFILER_Bar;
+    //   static MemoryTracker $PROFILER_Bar;
     Field[] fields = clazz.getFields();
     String matchname = PROFILER_FIELD_PREFIX+safe_class_name;
     for (int i = 0; i < fields.length; i++) {
       Field f = fields[i];
-      if ((f.getAccessFlags() ==
-            (Constants.ACC_PRIVATE |
-             Constants.ACC_STATIC |
-             Constants.ACC_FINAL)) &&
+      if (((f.getAccessFlags() & Constants.ACC_STATIC) != 0) &&
+          f.getName().equals(matchname) &&
           f.getType().equals(
-            new ObjectType(MEMORY_TRACKER_CLASS)) &&
-          f.getName().equals(matchname)) {
+            new ObjectType(MEMORY_TRACKER_CLASS))) {
         return true;
       }
     }
@@ -430,9 +600,6 @@ public class AddProfiler {
   private static long computeSerialVersionUID(JavaClass clazz) {
     // if there's no "serialVersionUID" field then calculate
     // the correct value so we don't break serialization
-    if (!ENSURE_SERIAL_VERSION_UID) {
-      return -1;
-    }
     Field[] fields = clazz.getFields();
     for (int i = 0; i < fields.length; i++) {
       Field field = fields[i];
@@ -497,18 +664,76 @@ public class AddProfiler {
            Constants.ACC_PROTECTED)) == 0) {
       // check for package-private access
       int sep = class_name.lastIndexOf('.');
-      String pack = 
+      String pack =
         (sep >= 0 ? class_name.substring(0, sep) : "");
       String superpack = supercl.getPackageName();
       if (!pack.equals(superpack)) {
         // package-private
-        return false; 
+        return false;
       }
     }
     return true;
   }
 
+  private static String validateStaticAccess(
+      String key, String value) {
+    String ret = value;
+    boolean is_method = key.endsWith("Method");
+    if (value.indexOf('.') < 0) {
+      System.err.println(
+          "Invalid CLASSNAME."+
+          (is_method ? "METHOD" : "FIELD")+
+          ": "+value);
+      return null;
+    }
+    if (is_method) {
+      if (!value.endsWith("()")) {
+        ret = value+"()";
+      }
+    } else {
+      if (value.endsWith("()")) {
+        System.err.println(
+            "Use --"+
+            key.substring(0, key.length()-"Field".length())+
+            "Method="+value);
+        return null;
+      }
+    }
+    return ret;
+  }
+
+  private Instruction createStaticAccess(
+      String desc, Type type) {
+    // lookup value at runtime
+    int sep = desc.lastIndexOf('.');
+    String cl = desc.substring(0, sep);
+    String name = desc.substring(sep+1);
+    Instruction ret;
+    if (name.endsWith("()")) {
+      ret =
+        factory.createInvoke(
+            cl,
+            name,
+            type,
+            Type.NO_ARGS,
+            Constants.INVOKESTATIC);
+    } else {
+      ret =
+        factory.createFieldAccess(
+            cl,
+            name,
+            type,
+            Constants.GETSTATIC);
+    }
+    return ret;
+  }
+
   private void defineSize() {
+    if (!enableSize) {
+      // disabled
+      return;
+    }
+
     has_size = false;
     // look for custom "$get_size()"
     Method[] methods = cg.getMethods();
@@ -604,6 +829,11 @@ public class AddProfiler {
   }
 
   private void defineCapacity() {
+    if (!enableCapacity) {
+      // disabled
+      return;
+    }
+
     has_capacity = false;
     boolean has_capacity_count = false;
     boolean has_capacity_bytes = false;
@@ -694,9 +924,9 @@ public class AddProfiler {
     //     foreach (arrays) {
     //       type[] a = field;
     //       if (a == null) {
-    //         continue; 
-    //       } 
-    //       int tmp = a.length; 
+    //         continue;
+    //       }
+    //       int tmp = a.length;
     //       if (_bytes) {
     //         tmp = 12 + len*sizeof(type);
     //       }
@@ -716,13 +946,13 @@ public class AddProfiler {
         il,
         cp);
     il.append(InstructionConstants.ICONST_0);
-    BranchInstruction ifnull = null;
+    BranchInstruction if_null = null;
     for (int k = arrays.size() - 1; k >= 0; k--) {
       Field f = (Field) arrays.get(k);
       InstructionHandle load_this =
         il.append(factory.createLoad(Type.OBJECT, 0));
-      if (ifnull != null) {
-        ifnull.setTarget(load_this);
+      if (if_null != null) {
+        if_null.setTarget(load_this);
       }
       il.append(
           factory.createFieldAccess(
@@ -732,9 +962,9 @@ public class AddProfiler {
             Constants.GETFIELD));
       il.append(factory.createDup(1));
       il.append(factory.createStore(Type.OBJECT, 1));
-      ifnull =
+      if_null =
         factory.createBranchInstruction(Constants.IFNULL, null);
-      il.append(ifnull);
+      il.append(if_null);
       il.append(factory.createLoad(Type.OBJECT, 1));
       il.append(InstructionConstants.ARRAYLENGTH);
       if (bytes) {
@@ -767,8 +997,8 @@ public class AddProfiler {
     }
     InstructionHandle ret_int =
       il.append(factory.createReturn(Type.INT));
-    if (ifnull != null) {
-      ifnull.setTarget(ret_int);
+    if (if_null != null) {
+      if_null.setTarget(ret_int);
     }
     method.setMaxStack();
     method.setMaxLocals();
@@ -779,11 +1009,15 @@ public class AddProfiler {
   private void defineProfilerField() {
     // add:
     //   private static final MemoryTracker $PROFILER_Bar;
+    int acc =
+      (Constants.ACC_PRIVATE |
+       Constants.ACC_STATIC);
+    if (isStaticInit()) {
+      acc |= Constants.ACC_FINAL;
+    }
     FieldGen field =
       new FieldGen(
-          (Constants.ACC_PRIVATE |
-           Constants.ACC_STATIC |
-           Constants.ACC_FINAL),
+          acc,
           new ObjectType(MEMORY_TRACKER_CLASS),
           PROFILER_FIELD_PREFIX+safe_class_name,
           cp);
@@ -791,6 +1025,10 @@ public class AddProfiler {
   }
 
   private void initProfilerField() {
+    if (!isStaticInit()) {
+      return;
+    }
+
     // find "<clinit>" and update it
     Method clinit_method = null;
     Method[] methods = cg.getMethods();
@@ -822,7 +1060,7 @@ public class AddProfiler {
         class_name,
         il,
         cp);
-    writeClassInit(il, bytes);
+    writeClassInit(il, bytes, false);
     il.append(factory.createReturn(Type.VOID));
     method.setMaxStack();
     method.setMaxLocals();
@@ -836,7 +1074,7 @@ public class AddProfiler {
     // and the constructor would see a null field.
     MethodGen method = new MethodGen(orig_m, class_name, cp);
     InstructionList il = new InstructionList();
-    writeClassInit(il, bytes);
+    writeClassInit(il, bytes, false);
     InstructionList orig_il = method.getInstructionList();
     orig_il.insert(il);
     il.dispose();
@@ -845,29 +1083,63 @@ public class AddProfiler {
     cg.replaceMethod(orig_m, method.getMethod());
     orig_il.dispose();
   }
-  private void writeClassInit(InstructionList il, int bytes) {
-    il.append(new PUSH(cp, class_name));
+  private InstructionHandle writeClassInit(
+      InstructionList il, int bytes, boolean dup) {
+    InstructionHandle begin = il.append(new PUSH(cp, class_name));
     il.append(new PUSH(cp, bytes));
-    Type[] args;
-    if (!has_size && !has_capacity) {
-      args = new Type[] { Type.STRING, Type.INT };
-    } else {
-      args = new Type[] {
-        Type.STRING, Type.INT, Type.BOOLEAN, Type.BOOLEAN};
+
+    // get options
+    il.append(new PUSH(cp, module));
+    il.append(new PUSH(cp, class_name));
+    il.append(
+        factory.createInvoke(
+          config,
+          GET_OPTIONS_METHOD,
+          new ObjectType(OPTIONS_CLASS),
+          new Type[] { Type.STRING, Type.STRING },
+          Constants.INVOKESTATIC));
+
+    // mask out size if !has_size, ditto for capacity
+    if (!has_size || !has_capacity) {
+      il.append(InstructionConstants.DUP);
+      il.append(factory.createStore(Type.OBJECT, 1));
+      BranchInstruction if_null =
+        factory.createBranchInstruction(Constants.IFNULL, null);
+      il.append(if_null);
+      il.append(factory.createLoad(Type.OBJECT, 1));
       il.append(new PUSH(cp, has_size));
       il.append(new PUSH(cp, has_capacity));
+      il.append(factory.createInvoke(
+            OPTIONS_CLASS,
+            MASK_METHOD,
+            new ObjectType(OPTIONS_CLASS),
+            new Type[] { Type.BOOLEAN, Type.BOOLEAN },
+            Constants.INVOKEVIRTUAL));
+      il.append(factory.createStore(Type.OBJECT, 1));
+      InstructionHandle ih_load =
+        il.append(factory.createLoad(Type.OBJECT, 1));
+      if_null.setTarget(ih_load);
     }
+
+    // get profiler
     il.append(factory.createInvoke(
           MEMORY_TRACKER_CLASS,
-          GET_TRACKER_INSTANCE,
+          GET_INSTANCE_METHOD,
           new ObjectType(MEMORY_TRACKER_CLASS),
-          args,
+          new Type[] {
+            Type.STRING,
+            Type.INT,
+            new ObjectType(OPTIONS_CLASS)},
           Constants.INVOKESTATIC));
+    if (dup) {
+      il.append(InstructionConstants.DUP);
+    }
     il.append(factory.createFieldAccess(
           class_name,
           PROFILER_FIELD_PREFIX+safe_class_name,
           new ObjectType(MEMORY_TRACKER_CLASS),
           Constants.PUTSTATIC));
+    return begin;
   }
 
   private void disableSuperProfiler() {
@@ -920,11 +1192,12 @@ public class AddProfiler {
   }
 
   private void addClassProfiler() {
-    // add:
+    // if (isStaticInit() == false) then we do:
     //   protected void $profile_Bar() {
-    //     if ($PROFILER_Bar != null) {
-    //       $PROFILER_Bar.add(this);
+    //     if ($PROFILER_Bar == null) {
+    //       return;
     //     }
+    //     $PROFILER_Bar.add(this);
     //   }
     //
     // The $PROFILER_Bar field is almost always non-null, since it's
@@ -933,7 +1206,7 @@ public class AddProfiler {
     // construct an instance *before* our class's <clinit>!
     //
     // Here's an example based upon log4j-1.2.7:
-    //   public class Logger { 
+    //   public class Logger {
     //     public static void main(String[] args) {
     //       System.out.println(Level.class);
     //     }
@@ -947,6 +1220,19 @@ public class AddProfiler {
     //   }
     // This will print "INFO: null" and the Level classname.
     // Our profiler field would also be null.
+    //
+    // If (isStaticInit() == false) then we do:
+    //   protected void $profile_Bar() {
+    //     if ($PROFILER_Bar == null) {
+    //       Options options = OPTIONS_FACTORY.getOptions("Bar");
+    //       $PROFILER_Bar = MemoryTracker.getInstance(
+    //         "Bar", BYTES_EACH, options);
+    //     }
+    //     $PROFILER_Bar.add(this);
+    //   }
+    // We don't need to synchronize since the MemoryTracker is
+    // internally synchronized and redundant "getInstance(..)"
+    // calls will return identical ClassTrackers.
     InstructionList il = new InstructionList();
     MethodGen method =
       new MethodGen(
@@ -959,27 +1245,33 @@ public class AddProfiler {
           il,
           cp);
     il.append(
-        factory.createFieldAccess(
-          class_name,
-          PROFILER_FIELD_PREFIX+safe_class_name,
-          new ObjectType(MEMORY_TRACKER_CLASS),
-          Constants.GETSTATIC));
-    il.append(factory.createDup(1));
+      factory.createFieldAccess(
+        class_name,
+        PROFILER_FIELD_PREFIX+safe_class_name,
+        new ObjectType(MEMORY_TRACKER_CLASS),
+        Constants.GETSTATIC));
+    il.append(InstructionConstants.DUP);
     il.append(factory.createStore(Type.OBJECT, 1));
-    BranchInstruction ifnull =
-      factory.createBranchInstruction(Constants.IFNULL, null);
-    il.append(ifnull);
-    il.append(factory.createLoad(Type.OBJECT, 1));
+    BranchInstruction if_nonnull =
+        factory.createBranchInstruction(Constants.IFNONNULL, null);
+    il.append(if_nonnull);
+    if (isStaticInit()) {
+      il.append(factory.createReturn(Type.VOID));
+    } else {
+      int bytes = computeSize();
+      InstructionHandle init_profiler = writeClassInit(il, bytes, true);
+      il.append(factory.createStore(Type.OBJECT, 1));
+    }
+    InstructionHandle ih_add = il.append(factory.createLoad(Type.OBJECT, 1));
+    if_nonnull.setTarget(ih_add);
     il.append(factory.createLoad(Type.OBJECT, 0));
     il.append(factory.createInvoke(
           MEMORY_TRACKER_CLASS,
-          ADD_TO_TRACKER,
+          ADD_METHOD,
           Type.VOID,
           new Type[] { Type.OBJECT },
           Constants.INVOKEVIRTUAL));
-    InstructionHandle ret =
-      il.append(factory.createReturn(Type.VOID));
-    ifnull.setTarget(ret);
+    il.append(factory.createReturn(Type.VOID));
     method.setMaxStack();
     method.setMaxLocals();
     cg.addMethod(method.getMethod());
@@ -1252,5 +1544,23 @@ public class AddProfiler {
       cg.replaceMethod(orig_m, method.getMethod());
     }
     orig_il.dispose();
+  }
+
+  private void recordArraysAllocations() {
+    // Java lacks an "Array" class to represent arrays, so
+    // we can't modify a single classes constructor.  Instead
+    // we must modify all the clients!
+    //
+    // for all methods {
+    //   after every:
+    //     push length
+    //     new<type>array
+    //   append:
+    //     dup
+    //     $PROFILER_ARRAYS.new<type>array
+    // }
+    //
+    // Arrays may also be allocated in native code...
+    throw new UnsupportedOperationException("Not implement yet");
   }
 }

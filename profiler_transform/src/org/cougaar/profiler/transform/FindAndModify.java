@@ -26,8 +26,10 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.PrintStream;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -49,13 +51,14 @@ public abstract class FindAndModify {
     String t = getDefaultTarget();
     String x = getDefaultSuffix();
     System.err.println(
-        "Usage: "+c+" [--help] [-v] [-C DIR] [-d DIR] [DIR]..\n"+
+        "Usage: "+c+" [--help] [-v] [-C DIR] [-d DIR] [OPTIONS] [DIR]..\n"+
         "\n"+
-        "  --help  display this help and exit\n"+
-        "  -v      verbose output (default is quiet)\n"+
-        "  -C DIR  set the source directory (default is \""+s+"\")\n"+
-        "  -d DIR  set the target directory (default is \"./"+t+"\")\n"+
-        "  DIR     directory with \"*"+x+"\" files\n"+
+        "  --help   display this help and exit\n"+
+        "  -v       verbose output (default is quiet)\n"+
+        "  -C DIR   set the source directory (default is \""+s+"\")\n"+
+        "  -d DIR   set the target directory (default is \"./"+t+"\")\n"+
+        "  OPTIONS  subclass-defined options\n"+ 
+        "  DIR      directory with \"*"+x+"\" files\n"+
         "\n"+
         "Runs class modifier on all \"*"+x+"\" files found in\n"+
         "the specified directories.  Writes the new files\n"+
@@ -71,7 +74,15 @@ public abstract class FindAndModify {
   private String suffix;
   private Set dirs;
 
-  /** Subclass must implement this method */
+  /**
+   * Configure with the optional command-line parameters.
+   * @return true if failure 
+   */
+  protected abstract boolean configure(String[] args);
+
+  /**
+   * Read the file and write the modified output to the stream.
+   */
   protected abstract void modifyFile(
       String filename,
       OutputStream os) throws Exception;
@@ -81,49 +92,66 @@ public abstract class FindAndModify {
   protected String getDefaultSuffix() { return ".class"; }
 
   protected void run(String[] args) throws Exception {
-    if (!parseOptions(args)) {
-      return;
+    if (parseOptions(args)) {
+      execute();
+    } else {
+      usage();
     }
-    execute();
   }
 
   protected boolean parseOptions(String[] args) throws Exception {
-    if (args.length == 0) {
-      usage();
-      return false;
-    }
-
     verbose = false;
     source = getDefaultSource();
     target = getDefaultTarget();
     suffix = getDefaultSuffix();
     dirs = new HashSet(args.length);
+
+    List options = null;
+
     for (int i = 0; i < args.length; i++) {
       String s = args[i];
+      if (!s.startsWith("-")) {
+        dirs.add(s);
+        continue;
+      }
       if (s.equals("--help")) {
-        usage();
         return false;
       } else if (s.equals("-v")) {
         verbose = true;
       } else if (s.equals("-d")) {
-        i++;
-        if (i >= args.length) {
+        if (++i < args.length) {
+          target = args[i];
+        } else {
           System.err.println("Missing -d DIR\n");
-          usage();
           return false;
         }
-        target = args[i];
       } else if (s.equals("-C")) {
-        i++;
-        if (i >= args.length) {
+        if (++i < args.length) {
+          source = args[i];
+        } else {
           System.err.println("Missing -C DIR\n");
-          usage();
           return false;
         }
-        source = args[i];
       } else {
-        dirs.add(s);
+        if (options == null) {
+          options = new ArrayList();
+        }
+        options.add(s);
       }
+    }
+
+    if (dirs.isEmpty()) {
+      return false;
+    }
+
+    String[] sa;
+    if (options == null) {
+      sa = new String[0];
+    } else {
+      sa = (String[]) options.toArray(new String[0]);
+    }
+    if (!configure(sa)) {
+      return false;
     }
 
     return true;

@@ -20,7 +20,7 @@
 # </copyright>
 
 #
-# transform jar
+# transform jar to add "memory tracker" profiling code
 #
 # run with "--help" for usage notes.
 #
@@ -28,51 +28,108 @@
 usage () {
   cat <<EOF
 Usage:
-  $0 [-v] MODULE [FILTER ..]
+  $0 [-v] [-f] [-b] [OPTIONS..] MODULE [PATH..]
 
-  -v        verbose output
-  MODULE    module name (e.g. "core")
-  FILTER    optional filter path(s)
+  -v                   verbose output
+  -f                   force transform
+  -b                   use bootstrap classloader
+  --help               print this usage information
+
+  --config=STRING      class name of Options factory class, which
+                       controls which classes are profiled and the
+                       profiling detail.  The default is
+                       "org.cougaar.profiler.DefaultOptionsFactory"
+
+  --module=STRING      optional "module" name that will be passed to
+                       the Options factory method.  The default is
+                       the jar name.
+
+  --clinit=BOOLEAN     initialize the profiler field in the static
+                       class init as opposed to the first alloc
+                       (default is true)
+  --size=BOOLEAN       capture size (default is true)
+  --capacity=BOOLEAN   capture capacity (default is true)
+  --uid=BOOLEAN        ensure serialVersionUID (default is true)
+
+  MODULE               module name (e.g. "core")
+  PATH                 optional path and classname filter(s)
 
 Adds profiling instructions to classes in the specified
 module's jar file.
 
-If the module name matches "java*patch" then the corresponding
+If the module name matches "java.*" then the corresponding
 "java.*" package is profiled.
 
 Examples:
   # profile all of java.util.*,
   # create new \$CIP/lib/javautilpatch.jar
-  $0 javautilpatch
+  $0 java.util
 
-  # profile all of Cougaar core,
+  # profile all of Cougaar core
+  # use custom Options factory class named "foo.MyConfig"
   # create new \$CIP/lib/core.jar
-  $0 core
+  $0 --config=foo.MyConfig core
 
-  # profile some of Cougaar planning,
+  # profile Cougaar planning "LDM" and plugins
   # create new \$CIP/lib/planning.jar
   $0 planning org/cougaar/planning/ldm org/cougaar/planning/plugin
 
-  # profile everything!
-  for x in io net util rmi; do $0 java${x}patch; done
+  # profile everything!  This may take a while...
+  #
+  # The following errors are expected:
+  #   icu4j:        two class files are corrupt
+  #   jena:         missing jars (sesame, antlr, sleepycat)
+  #   juddi:        missing jars (axis)
+  #   log4j:        missing jars (jms, jmx)
+  #   openmap:      missing jars (j3d)
+  #   tomcat_40:    missing jars (jmx)
+  #   vishnuServer: missing jars (vishnu, util)
+  # These errors and related NPEs can be ignored, since the classes
+  # that depend upon these missing jars will never be loaded at
+  # runtime.
+  JAVA_PKGS="applet awt beans io lang math net nio rmi security sql text util"
+  for x in \$JAVA_PKGS; do $0 java.${x}; done
   for x in \$CIP/lib/*.jar; do $0 $x; done
   for x in \$CIP/sys/*.jar; do $0 $x; done
+  # plus there's more in \$JAVA_HOME/jre/lib/rt.jar
 EOF
 }
 
-if [ -z $1 ] || [ $1 = --help ]; then
+VERBOSE=
+FORCE=
+BOOTSTRAP=
+OPTIONS=
+
+while true; do
+  case $1 in
+    --help)
+        usage
+        exit -1;;
+    -v) VERBOSE=1
+        shift
+        continue;;
+    -f) FORCE=1
+        shift
+        continue;;
+    -b) BOOTSTRAP=1
+        shift
+        continue;;
+    --*) OPTIONS="$OPTIONS $1"
+        shift
+        continue;;
+    -*) usage
+       exit -1;;
+    *) break;;
+  esac
+done
+
+if [ -z $1 ]; then
   usage
   exit -1
 fi
 
-VERBOSE=
-if [ $1 = -v ]; then
-  VERBOSE=1
-  shift 1
-fi
-
 MODULE=$1
-shift 1
+shift
 FILTERS=$*
 
 if [ -z $CIP ]; then
@@ -129,7 +186,7 @@ restore_jars () {
     if [ -f $OLD ]; then
       # restore backup
       rm $LINK || exit -1
-      if [ -f $NEW ]; then
+      if [ ! -z $FORCE ] && [ -f $NEW ]; then
         rm $NEW || exit -1
       fi
       ln -s $OLD $LINK || exit -1
@@ -141,19 +198,8 @@ restore_jars () {
   fi
 }
 
-create_jars () {
-  echo "  jaring"
-
+link_jars () {
   NEW=$DIR/$MODULE.jar.new
-
-  cd new/old/classes || exit -1
-  jar cf $NEW * || exit -1
-
-  # sign the jar
-  if [ -x $SIGN_SCRIPT ]; then
-    echo "  signing new $MODULE.jar"
-    $SIGN_SCRIPT $NEW || exit -1
-  fi
 
   # create link to our new jar
   LINK=$DIR/$MODULE.jar
@@ -163,6 +209,27 @@ create_jars () {
   if [ ! -f $LINK ]; then
     ln -s $NEW $LINK || exit -1
   fi
+}
+
+create_jars () {
+  echo "  jaring"
+
+  NEW=$DIR/$MODULE.jar.new
+
+  if [ -f $NEW ]; then
+    rm $NEW || exit -1
+  fi
+
+  cd $TMP/$MODULE/new/old/classes || exit -1
+  jar cf $NEW * || exit -1
+
+  # sign the jar
+  if [ -x $SIGN_SCRIPT ]; then
+    echo "  signing new $MODULE.jar"
+    $SIGN_SCRIPT $NEW || exit -1
+  fi
+
+  link_jars
 }
 
 prepare_jdk () {
@@ -202,10 +269,9 @@ prepare_jdk () {
   cd $TMP || exit -1
   mkdir -p $MODULE/new/old/classes || exit -1
   cd $MODULE/new/old/classes || exit -1
-  unzip -q $FROM "java/$NAME/*" || exit -1
-  find . -type d -exec chmod 777 {} \; || exit -1
   if [ ! -z $OVERLAY ]; then
     unzip -q -o $OVERLAY "java/$NAME/*" || exit -1
+    find . -type d -exec chmod 777 {} \; || exit -1
   fi
 }
 
@@ -291,7 +357,11 @@ EOF
 }
 
 get_classpath () {
-  # RFE: couldn't we just use the bootstrapper?
+
+  # optionally just use the bootstrapper!
+  if [ ! -z $BOOTSTRAP ]; then
+    eval "$1=\"\""
+  fi
 
   # get jar dependencies from "default.build"
   get_dependency SEPLIB "${MODULE}\.deps"
@@ -309,7 +379,10 @@ get_classpath () {
       echo "  missing dependency: $CIP/lib/$x.jar"
     fi
   done
-  SYSDEP="$CIP/lib/javaiopatch.jar"
+  SYSDEP=""
+  if [ -f $CIP/lib/javaiopatch.jar ]; then
+    SYSDEP=$CIP/lib/javaiopatch.jar
+  fi
   for x in $SEPSYS; do
     if [ -f $CIP/sys/$x.jar ]; then
       SYSDEP="$SYSDEP:$CIP/sys/$x.jar"
@@ -329,21 +402,74 @@ get_classpath () {
   eval "$1=\"$RET\""
 }
 
+get_transform_command () {
+  LIB=$2
+
+  if [ -z $BOOTSTRAP ]; then
+    CP="$BCEL:$CIP/lib/profiler_transform.jar:$CIP/lib/profiler_impl.jar"
+    if [ ! -z $LIB ]; then
+      CP="$CP:$LIB"
+    fi
+    BOOTCL=
+  else
+    CP=$CIP/lib/bootstrap.jar
+    if [ ! -e $CP ]; then
+      echo "bootstrap jar not found: $CP"
+      exit -1
+    fi
+    BOOTCL="org.cougaar.core.bootstrap.Bootstrapper"
+  fi
+
+  # basic command excluding classname and args
+  RET="java -classpath $CP $BOOTCL"
+
+  eval "$1=\"$RET\""
+}
+
+transform_one () {
+  LIB=$1
+  FILE=$2
+
+  echo "  instrumenting $FILE"
+
+  get_transform_command COMMAND $LIB
+
+  cd $TMP/$MODULE || exit -1
+
+  OLD=old/classes/$FILE
+  NEW=new/old/classes/$FILE
+
+  if [ ! -f $OLD ]; then
+    echo "  file not found: $OLD"
+    exit -1
+  fi
+
+  COMMAND="$COMMAND \
+    org.cougaar.profiler.transform.SelfProfiler \
+    $OPTIONS \
+    $OLD"
+  if [ ! -z $VERBOSE ]; then
+    echo $COMMAND '>' $NEW
+  fi
+  $COMMAND > $NEW || exit -1
+  if [ ! -f $NEW ]; then
+    echo "Transform $FILE failed, missing $NEW"
+    exit -1
+  fi
+}
+
 transform () {
   LIB=$1
 
   echo "  instrumenting"
 
-  CP="$BCEL:$CIP/lib/profiler_transform.jar:$CIP/lib/profiler_impl.jar"
-  if [ ! -z $LIB ]; then
-    CP="$CP:$LIB"
-  fi
+  get_transform_command COMMAND $LIB
 
   cd $TMP/$MODULE || exit -1
-  COMMAND="java \
-    -classpath $CP\
-    org.cougaar.profiler.transform.ProfileAll\
-    old"
+  COMMAND="$COMMAND \
+    org.cougaar.profiler.transform.ProfileAll \
+    old \
+    $OPTIONS"
   if [ ! -z $VERBOSE ]; then
     echo $COMMAND
   fi
@@ -357,18 +483,14 @@ transform () {
 transform_jdk () {
   NAME=$1
 
-  if [ $NAME = lang ]; then
-    echo "Unable to profile \"java.lang\""
-    exit -1
-  fi
-
-  if [ -z $FILTERS ]; then
+  ORIG_FILTERS="$FILTERS"
+  if [ "$FILTERS" = "" ]; then
     FILTERS="java/${NAME}/*"
   fi
 
   restore_jars
   prepare_jdk $NAME
-  transform
+  transform ""
   create_jars
 }
 
@@ -381,24 +503,46 @@ transform_cougaar () {
 }
 
 # parse "[/foo/]${MODULE}[.jar]"
-BASE=`echo $MODULE | perl -ne 'print $2 if (/^(.*\/)?([^\/]*)(\.jar)$/)'`
+BASE=`echo $MODULE | perl -ne 'print $2 if (/^(.*\/)?([^\/]*)(\.jar)(\.(old|new))*$/)'`
 if [ ! -z $BASE ]; then
   MODULE=$BASE
 fi
 
-if [ $MODULE = profiler_impl ] ||
+if [ $MODULE = profiler_config ] ||
+  [ $MODULE = profiler_impl ] ||
   [ $MODULE = profiler_transform ] ||
-  [ $MODULE = bootstrap ]; then
+  [ $MODULE = bootstrap ] ||
+  [ $MODULE = bcel ]; then
   echo "skipping $MODULE"
   exit 0
 fi
 
-echo "transforming $MODULE"
+if [ $MODULE = javaiopatch ]; then
+  # compatibility for Cougaar IO patch
+  $MODULE="java.io"
+fi
 
-# parse "java${NAME}patch"
-NAME=`echo $MODULE | perl -ne 'print $1 if (/^java(.*)patch$/)'`
+# parse "java.${NAME}"
+NAME=`echo $MODULE | perl -ne 'print $1 if (/^java\.(.*)$/)'`
+
+if [ ! -z $NAME ]; then
+  MODULE="java${NAME}patch"
+fi
+
+# specify module in profiled class
+OPTIONS="--module=$MODULE $OPTIONS"
 
 get_dir DIR $NAME
+
+if [ -z $FORCE ] && [ -e $DIR/$MODULE.jar.new ]; then
+  echo "already transformed $MODULE"
+  echo "  linking $MODULE.jar.new -> $MODULE.jar"
+  echo "  to force transform, run: $0 -f $MODULE"
+  link_jars
+  exit 0
+fi
+
+echo "transforming $MODULE"
 
 if [ -z $NAME ]; then
   transform_cougaar

@@ -32,9 +32,10 @@
 usage () {
   cat <<EOF
 Usage:
-  $0 [-v] MODULE
+  $0 [-v] [-f] MODULE
 
   -v        verbose
+  -f        force (remove MODULE.new and tmp/MODULE)
   MODULE    module name (e.g. "core")
 
 Reverts the output of "transform_jar".
@@ -43,9 +44,13 @@ if $CIP/lib contains:
    foo.jar.new
    foo.jar.old
    foo.jar -> foo.jar.new
-this script does:
+this script without -f does:
+   rm foo.jar
+   ln -s foo.jar.old foo.jar
+and with -f does:
    rm foo.jar.new foo.jar
    ln -s foo.jar.old foo.jar
+   rm -rf tmp/foo/old tmp/foo/new
 
 Example:
   # restore "core.jar.old"
@@ -64,7 +69,29 @@ if [ $1 = -v ]; then
   shift 1
 fi
 
+FORCE=
+if [ $1 = -f ]; then
+  FORCE=1
+  shift 1
+fi
+
 MODULE=$1
+shift 1
+
+if [ ! "$*" = "" ]; then
+  cat <<EOF
+Multiple modules specified.  Did you mean:
+EOF
+echo -n "  echo 'for x in $MODULE $*; do $0"
+if [ ! -z $VERBOSE ]; then
+  echo -n " -v"
+fi
+if [ ! -z $FORCE ]; then
+  echo -n " -f"
+fi
+echo " \$x; done' | bash"
+  exit -1
+fi
 
 if [ -z $CIP ]; then
   CIP=$COUGAAR_INSTALL_PATH
@@ -100,12 +127,12 @@ restore_jars () {
   NEW=$LINK.new
   # restore backup
   if [ -L $LINK ]; then
+    if [ ! -z $VERBOSE ]; then
+      echo "rm $LINK"
+    fi
+    rm $LINK || exit -1
     if [ -f $OLD ]; then
-      if [ ! -z $VERBOSE ]; then
-        echo "rm $LINK"
-      fi
-      rm $LINK || exit -1
-      if [ -f $NEW ]; then
+      if [ ! -z $FORCE ] && [ -f $NEW ]; then
         if [ ! -z $VERBOSE ]; then
           echo "rm $NEW"
         fi
@@ -119,7 +146,7 @@ restore_jars () {
   fi
   # remove temporary directories (optional)
   TMP=$CIP/tmp/$MODULE
-  if [ -d $TMP ]; then
+  if [ ! -z $FORCE ] && [ -d $TMP ]; then
     RM_OLD=`if [ -d $TMP/old ]; then echo $TMP/old; fi`
     RM_NEW=`if [ -d $TMP/new ]; then echo $TMP/new; fi`
     if [ ! -z $RM_OLD ] || [ ! -z $RM_NEW ]; then
@@ -141,7 +168,7 @@ restore_jars () {
 }
 
 # parse "[/foo/]${MODULE}[.jar]"
-BASE=`echo $MODULE | perl -ne 'print $2 if (/^(.*\/)?([^\/]*)(\.jar)$/)'`
+BASE=`echo $MODULE | perl -ne 'print $2 if (/^(.*\/)?([^\/]*)(\.jar)(\.(old|new))*$/)'`
 if [ ! -z $BASE ]; then
   MODULE=$BASE
 fi
