@@ -24,6 +24,7 @@ import java.io.IOException;
 import java.io.PrintWriter;
 import java.util.Arrays;
 import java.util.Date;
+import java.util.Random;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import org.cougaar.core.servlet.ComponentServlet;
@@ -34,6 +35,7 @@ import org.cougaar.profiler.Groupings;
 import org.cougaar.profiler.InstanceStats;
 import org.cougaar.profiler.MemoryStats;
 import org.cougaar.profiler.MemoryStatsImpl;
+import org.cougaar.profiler.Options;
 
 /**
  * Servlet to view MemoryTracker data.
@@ -75,6 +77,7 @@ extends ComponentServlet
     private static final String REQ_TYPE = "type";
     private static final String REQ_INCREASING = "inc";
     private static final String REQ_SORT = "sort";
+    private static final String REQ_SAMPLE = "sample";
     private static final String REQ_ROWS = "rows";
     private static final String REQ_STACK_LINES = "lines";
     private static final String REQ_TO_STRING_ENABLE = "stringEnable";
@@ -96,6 +99,7 @@ extends ComponentServlet
     private String type;
     private boolean increasing;
     private String sort;
+    private int sample;
     private int rows;
     private int stackLines;
     private int toStringLimit;
@@ -135,7 +139,7 @@ extends ComponentServlet
           req.getRequestURI()+
           "?"+REQ_ACTION+
           "="+REQ_ACTION_SCRIPT+
-          "\"/>\n"+
+          "\"></script>\n"+
           "</head>"+
           "<body>"+
           "<h2>"+name+" Memory Profiler</h2>"+
@@ -164,27 +168,33 @@ extends ComponentServlet
       out.close();
     }
 
+    private boolean getBoolean(String name, boolean def) {
+      String s = (String) req.getParameter(name);
+      return (s == null ? def : "true".equals(s));
+    }
+    private int getInt(String name, int def) {
+      String s = (String) req.getParameter(name);
+      return (s == null ? def : Integer.parseInt(s));
+    }
+    private String getString(String name, String def) {
+      String s = req.getParameter(name);
+      return (s == null ? def : s);
+    }
     private void parseParams() {
-      action = (String) req.getParameter(REQ_ACTION);
-      gc = "true".equals(req.getParameter(REQ_GC));
-      type = (String) req.getParameter(REQ_TYPE);
+      action = getString(REQ_ACTION, null);
+      gc = getBoolean(REQ_GC, false);
+      type = getString(REQ_TYPE, null);
 
       if (REQ_ACTION_INSTANCES.equals(action)) {
-        increasing = 
-          "true".equals(req.getParameter(REQ_INCREASING));
-        sort = (String) req.getParameter(REQ_SORT);
-        rows = Integer.parseInt(req.getParameter(REQ_ROWS));
-        stackLines = 
-          Integer.parseInt(req.getParameter(REQ_STACK_LINES));
-        boolean toStringEnable = 
-          "true".equals(req.getParameter(REQ_TO_STRING_ENABLE));
-
-        if (toStringEnable) {
-          toStringLimit = 
-            Integer.parseInt(req.getParameter(REQ_TO_STRING_LIMIT));
-        } else {
-          toStringLimit = -1;
-        }
+        increasing = getBoolean(REQ_INCREASING, false);
+        sort = getString(REQ_SORT, null);
+        sample = getInt(REQ_SAMPLE, 0);
+        rows = getInt(REQ_ROWS, 0);
+        stackLines = getInt(REQ_STACK_LINES, 0);
+        toStringLimit = 
+          (getBoolean(REQ_TO_STRING_ENABLE, false) ?
+           getInt(REQ_TO_STRING_LIMIT, -1) :
+           -1);
       }
     }
 
@@ -246,8 +256,9 @@ extends ComponentServlet
         ClassTracker ct = memoryStats.getClassTracker(cl);
         //ct.update();
         ClassStats cs = ct.getOverallStats();
+        double trackRatio = ct.getOptions().getSampleRatio();
         int bytes = ct.getObjectSize();
-        printType(null, cs, cl, bytes, true);
+        printType(null, cs, cl, trackRatio, bytes, true);
       }
 
       endTable(false);
@@ -265,6 +276,7 @@ extends ComponentServlet
       }
       out.println(
           "<th rowspan=2>"+tableColumn("Type", i++)+"</th>"+
+          "<th rowspan=2>"+tableColumn("Sample%", i++)+"</th>"+
           "<th colspan=3>Instances</th>"+
           "<th colspan=3>Memory</th>"+
           "<th colspan=4>Size</th>"+
@@ -302,6 +314,7 @@ extends ComponentServlet
         String agent,
         ClassStats cs,
         String cl,
+        double trackRatio,
         int bytes,
         boolean link) {
       out.print("<tr align=right><td align=left>");
@@ -319,22 +332,44 @@ extends ComponentServlet
       long live = cs.getInstances();
       long dead = cs.getGarbageCollected();
       long cap = cs.getSumCapacityBytes();
+      long sumSize = cs.getSumSize();
+      long sumCap = cs.getSumCapacityCount();
+      if (trackRatio < 1.0) {
+        if (trackRatio > 0.0) {
+          live = (long) ((double) live / trackRatio);
+          dead = (long) ((double) dead / trackRatio);
+          cap = (long) ((double) cap / trackRatio);
+          sumSize = (long) ((double) sumSize / trackRatio);
+          sumCap = (long) ((double) sumCap / trackRatio);
+        } else {
+          live = 0;
+          dead = 0;
+          cap = 0;
+          sumSize = 0;
+          sumCap = 0;
+        }
+      }
+      double meanSize =
+        (live > 0 ? ((double) sumSize / live) : 0.0);
+      double meanCap =
+        (live > 0 ? ((double) sumCap / live) : 0.0);
       out.print(
           "</td><td>"+
+          format(100.0*trackRatio)+"</td><td>"+
           live+"</td><td>"+
           dead+"</td><td>"+
           (live + dead)+"</td><td>"+
           bytes+"</td><td>"+
           (live * bytes)+"</td><td>"+
           ((live * bytes)+cap)+"</td><td>"+
-          cs.getSumSize()+"</td><td>"+
+          sumSize+"</td><td>"+
           cs.getMaximumSize()+"</td><td>"+
           cs.getMaximumEverSize()+"</td><td>"+
-          getMeanSize(cs)+"</td><td>"+
-          cs.getSumCapacityCount()+"</td><td>"+
+          format(meanSize)+"</td><td>"+
+          sumCap+"</td><td>"+
           cs.getMaximumCapacityCount()+"</td><td>"+
           cs.getMaximumEverCapacityCount()+"</td><td>"+
-          getMeanCapacityCount(cs)+"</td></tr>\n");
+          format(meanCap)+"</td></tr>\n");
     }
 
     private void printType() {
@@ -351,6 +386,8 @@ extends ComponentServlet
       ct.update();
       ClassStats cs = ct.getOverallStats();
       int bytes = ct.getObjectSize();
+      Options options = ct.getOptions();
+      double trackRatio = options.getSampleRatio();
 
       String[] agents = ct.getAgentNames();
       int numAgents = (agents == null ? 0 : agents.length);
@@ -359,11 +396,11 @@ extends ComponentServlet
       beginTable(hasAgent);
       printType(
           (hasAgent ? "*" : null),
-          cs, type, bytes, false);
+          cs, type, trackRatio, bytes, false);
       for (int i = 0; i < numAgents; i++) {
         String agent = agents[i];
         ClassStats acs = ct.getAgentStats(agent);
-        printType(agent, acs, type, bytes, false);
+        printType(agent, acs, type, trackRatio, bytes, false);
       }
       endTable(hasAgent);
 
@@ -395,7 +432,7 @@ extends ComponentServlet
           "  <option value=\"true\">increasing</option>"+
           "</select>"+
           "<select name=\""+REQ_SORT+"\">");
-      String[] comp_names = Comparators.getNames();
+      String[] comp_names = Comparators.getNames(options);
       for (int i = 0; i < comp_names.length; i++) {
         String s = comp_names[i];
         out.println(
@@ -403,7 +440,7 @@ extends ComponentServlet
             (i == 0 ? " selected" : "")+
             ">"+s+"</option>");
       }
-      String[] group_names = Groupings.getNames("uniq_");
+      String[] group_names = Groupings.getNames("uniq_", options);
       for (int i = 0; i < group_names.length; i++) {
         String s = group_names[i];
         out.println(
@@ -417,12 +454,20 @@ extends ComponentServlet
           "  <option>none</option>"+
           "</select>"+
           "<br>\n"+
+          "<i>Sample (-1 is all):</i>"+
+          "<input name=\""+REQ_SAMPLE+
+          "\" type=\"text\" value=\"1000\">"+
+          "<br/>\n"+
           "<i>Number of rows:</i>"+
           "<input name=\""+REQ_ROWS+
-          "\" type=\"text\" value=\"20\"><br/>"+
-          "<i>Number of lines in stack trace:</i>"+
-          "<input name=\""+REQ_STACK_LINES+
-          "\" type=\"text\" value=\"8\"><br/>"+
+          "\" type=\"text\" value=\"20\"><br/>");
+      if (options.isStackEnabled()) {
+        out.println(
+            "<i>Number of lines in stack trace:</i>"+
+            "<input name=\""+REQ_STACK_LINES+
+            "\" type=\"text\" value=\"8\"><br/>");
+      }
+      out.println(
           "<i>Show toString:</i>"+
           "<input type=\"checkbox\""+
           " name=\""+REQ_TO_STRING_ENABLE+
@@ -448,33 +493,114 @@ extends ComponentServlet
       int total = (iss == null ? 0 : iss.length);
 
       out.println(
-          "Showing "+
-          Math.min(rows, total)+
-          " of "+
-          total+
-          " <code>"+
-          getShortName(type)+
-          "</code>'s"+
-          (sort == null ? "" : " by "+sort)+
+          "Showing <code>"+type+"</code>'s"+
+          (sort == null ?
+           "" :
+           (" by "+
+            (increasing ? "increasing" : "decreasing")+
+            " "+
+            sort))+
           "<p/>");
+
+      double trackRatio = ct.getOptions().getSampleRatio();
+      out.println(
+          "Tracked "+
+          (trackRatio < 1.0 ?
+           format(100.0*trackRatio) :
+           "100.0")+
+          "% of allocations<br/>");
+
+      out.println(
+          "Found "+total+" live instances"+
+          (trackRatio < 1.0 ?
+           ", estimated at "+
+           (trackRatio > 0.0 ?
+            format((double) total/trackRatio) :
+            "<i>0</i>") :
+           "")+
+          "<br/>");
+
+      double multiplier = -1.0;
+      if (sample >= 0 && total > sample) {
+        // randomly sample from the array
+        InstanceStats[] tmp = new InstanceStats[sample]; 
+        Random rand = new Random();
+        for (int i = 0; i < sample; i++) {
+          InstanceStats is;
+          int j = rand.nextInt(sample);
+          while (true) {
+            is = iss[j];
+            if (is != null) {
+              iss[j] = null;
+              break;
+            }
+            j++;
+            if (j >= total) {
+              j = 0;
+            }
+          }
+          tmp[i] = is;
+        }
+        double ratio = (total > 0 ? ((double) sample / total) : 1.0);
+        out.println(
+            "Randomly sampled "+sample+" of "+total+
+            " = "+format(100.0*ratio)+"%<br/>");
+        iss = tmp;
+        multiplier = (sample > 0 ? ((double) total / sample) : 0.0);
+        total = sample;
+      }
+
+      if (trackRatio < 1.0) {
+        if (trackRatio > 0.0) {
+          if (multiplier > 0.0) {
+            multiplier /= trackRatio;
+          } else {
+            multiplier = (1.0/trackRatio);
+          }
+        } else {
+          multiplier = 0.0;
+        }
+      }
 
       if (sort != null && sort.startsWith("uniq_")) {
         String group = sort.substring(5);
         Groupings.Count[] counts = Groupings.uniq(iss, group);
+        int ncounts = (counts == null ? 0 : counts.length);
+        int lines = Math.min(rows, ncounts);
+        double ratio = 
+          (ncounts > 0 ? ((double) lines / ncounts) : 0.0);
+        out.println(
+            "Displaying groups "+
+            lines+" of "+ncounts+
+            " = "+format(100.0*ratio)+"%<p/>");
         Comparators.sort(
             counts, increasing, Comparators.GROUP_COUNT);
-        printCounts(counts, group);
+        printCounts(counts, group, multiplier);
       } else {
+        int lines = Math.min(rows, total);
+        double ratio = 
+          (total > 0 ? ((double) lines / total) : 0.0);
+        out.println(
+            "Displaying instances "+
+            lines+" of "+total+
+            " = "+format(100.0*ratio)+"%<p/>");
         Comparators.sort(iss, increasing, sort);
         printInstances(iss);
       }
     }
 
-    private void printCounts(Groupings.Count[] counts, String group) {
+    private void printCounts(
+        Groupings.Count[] counts,
+        String group,
+        double multiplier) {
+      boolean hasMultiplier = (multiplier > 0.0);
       out.println(
           "<table align=\"center\" border=\"2\">"+
           "<tr>"+
-          "<th>Count</th>"+
+          (hasMultiplier ? 
+           "<th>Sampled</th>"+
+           "<th>Estimated Count</th>" :
+           "<th>Count</th>")+
           "<th>Value</th>"+
           "</tr>");
       int n = (counts == null ? 0 : counts.length);
@@ -488,7 +614,12 @@ extends ComponentServlet
         out.println(
             "<tr><td align=right>"+
             count+
-            "</td><td align=left>");
+            "</td>"+
+            (hasMultiplier ?
+             "<td align=right>"+
+             format(((double) count) * multiplier) +
+             "</td>" : "")+
+            "<td align=left>");
         if (obj instanceof Throwable) {
           // stack
           printStack((Throwable) obj);
@@ -517,9 +648,7 @@ extends ComponentServlet
           "<th rowspan=2>System HashCode</th>"+
           "<th colspan=2>Allocation Time</th>"+
           "<th rowspan=2>Size</th>"+
-          "<th rowspan=2>Max Size</th>"+
           "<th rowspan=2>Capacity</th>"+
-          "<th rowspan=2>Max Capacity</th>"+
           "<th rowspan=2>Context</th>"+
           "<th rowspan=2>Stack Trace</th>");
       if (toStringLimit > 0) {
@@ -563,9 +692,7 @@ extends ComponentServlet
       out.println("<td align=right>"+t+"</td>");
       out.println("<td align=right>"+(t - now)+"</td>");
       out.println("<td align=right>"+is.getSize()+"</td>");
-      out.println("<td align=right>"+is.getMaximumSize()+"</td>");
       out.println("<td align=right>"+is.getCapacityCount()+"</td>");
-      out.println("<td align=right>"+is.getMaximumCapacityCount()+"</td>");
 
       out.println("<td>");
       out.println("<font size=\"2\">");
@@ -655,25 +782,9 @@ extends ComponentServlet
       return format(mb);
     }
 
-    private static String getMeanSize(ClassStats cs) {
-      long n = cs.getInstances();
-      if (n <= 0) {
-        return "0.0";
-      }
-      double mean = ((double) cs.getSumSize() / n);
-      return format(mean);
-    }
-
-    private static String getMeanCapacityCount(ClassStats cs) {
-      long n = cs.getInstances();
-      if (n <= 0) {
-        return "0.0";
-      }
-      double mean = ((double) cs.getSumCapacityCount() / n);
-      return format(mean);
-    }
-
     private static String format(double d) {
+      // we want "#0.0#"
+      //
       // ideally we'd return this double with fewer decimal places:
       //   d = (((double) Math.round(d * 100)) / 100);
       //   return Double.toString(d); 
@@ -684,15 +795,12 @@ extends ComponentServlet
       double floor = Math.floor(d);
       double rem = d - floor;
       long shortrem = Math.round(rem * 100);
-      return (((long) floor) + "." + shortrem);
+      return 
+        (((long) floor)+
+         "."+
+         shortrem+
+         (shortrem < 10 ? "0" : ""));
     } 
-
-    private static String getShortName(Class cl) {
-      return getShortName(cl.getName());
-    }
-    private static String getShortName(String s) {
-      return s.substring(s.lastIndexOf('.') + 1, s.length());
-    }
   }
 
   // move me to "org.cougaar.util.StringUtility"!
