@@ -20,21 +20,20 @@
  */
 package org.cougaar.profiler.servlet;
 
-import java.io.PrintWriter;
 import java.io.IOException;
-import java.io.CharArrayWriter;
-import java.lang.ref.Reference;
-import java.io.*;
-import java.util.*;
-import org.cougaar.profiler.*;
-import java.security.Principal;
-import javax.servlet.Servlet;
-import javax.servlet.ServletException;
-import javax.servlet.http.HttpServlet;
+import java.io.PrintWriter;
+import java.util.Arrays;
+import java.util.Date;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
-
 import org.cougaar.core.servlet.ComponentServlet;
+import org.cougaar.profiler.ClassStats;
+import org.cougaar.profiler.ClassTracker;
+import org.cougaar.profiler.Comparators;
+import org.cougaar.profiler.Groupings;
+import org.cougaar.profiler.InstanceStats;
+import org.cougaar.profiler.MemoryStats;
+import org.cougaar.profiler.MemoryStatsImpl;
 
 /**
  * Servlet to view MemoryTracker data.
@@ -126,6 +125,7 @@ extends ComponentServlet
       res.setContentType("text/html");
       out = res.getWriter();
 
+      Date date = new Date();
       out.println(
           "<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.0 Transitional//EN\">"+
           "<html>"+
@@ -139,6 +139,10 @@ extends ComponentServlet
           "</head>"+
           "<body>"+
           "<h2>"+name+" Memory Profiler</h2>"+
+          "<p>"+
+          "Date: "+
+          date+
+          " ("+date.getTime()+")"+
           "<p>");
 
       try {
@@ -213,7 +217,10 @@ extends ComponentServlet
           "<table border=\"2\">\n"+
           "Memory in Megabytes:"+
           "<tr><th>Used</th><th>Free</th>"+
-          "<th>Total</th><th>Max</th></tr>\n"+
+          "<th>Total</th><th>Max</th>"+
+          "<td rowspan=2><input type=\"submit\" value=\"Force GC\"/>"+
+          "</td>"+
+          "</tr>\n"+
           "<tr><td align=right>"+
           getMegabytes(used)+
           "</td><td align=right>"+
@@ -222,9 +229,6 @@ extends ComponentServlet
           getMegabytes(total)+
           "</td><td align=right>"+
           getMegabytes(max)+
-          "</td></tr>\n"+
-          "<tr><td>"+
-          "<input type=\"submit\" value=\"Force GC\"/>"+
           "</td></tr>\n"+
           "</table>\n"+
           "</form>\n");
@@ -262,7 +266,7 @@ extends ComponentServlet
       out.println(
           "<th rowspan=2>"+tableColumn("Type", i++)+"</th>"+
           "<th colspan=3>Instances</th>"+
-          "<th colspan=2>Memory</th>"+
+          "<th colspan=3>Memory</th>"+
           "<th colspan=4>Size</th>"+
           "<th colspan=4>Capacity</th>"+
           "</tr>\n"+
@@ -272,6 +276,7 @@ extends ComponentServlet
           "<th>"+tableColumn("Total", i++)+"</th>"+
           "<th>"+tableColumn("Bytes Each", i++)+"</th>"+
           "<th>"+tableColumn("*Live", i++)+"</th>"+
+          "<th>"+tableColumn("+Capacity Bytes", i++)+"</th>"+
           "<th>"+tableColumn("Sum", i++)+"</th>"+
           "<th>"+tableColumn("Max", i++)+"</th>"+
           "<th>"+tableColumn("Max Ever", i++)+"</th>"+
@@ -285,7 +290,7 @@ extends ComponentServlet
           "<tbody id=\"tbl\">");
     }
     private static String tableColumn(String colname, int i) {
-      return JavascriptTableSort.sortLink("tbl", colname, i, true);
+      return JavascriptTableSort.sortLink("tbl", colname, i, false);
     }
     private void endTable(boolean showAgent) {
       out.println(
@@ -311,23 +316,25 @@ extends ComponentServlet
       if (link) {
         out.print("</a>");
       }
-      long instances = cs.getInstances();
-      long collected = cs.getGarbageCollected();
+      long live = cs.getInstances();
+      long dead = cs.getGarbageCollected();
+      long cap = cs.getSumCapacityBytes();
       out.print(
           "</td><td>"+
-          instances+"</td><td>"+
-          collected+"</td><td>"+
-          (instances + collected)+"</td><td>"+
+          live+"</td><td>"+
+          dead+"</td><td>"+
+          (live + dead)+"</td><td>"+
           bytes+"</td><td>"+
-          (instances * bytes)+"</td><td>"+
-          cs.getTotalSize()+"</td><td>"+
+          (live * bytes)+"</td><td>"+
+          ((live * bytes)+cap)+"</td><td>"+
+          cs.getSumSize()+"</td><td>"+
           cs.getMaximumSize()+"</td><td>"+
-          cs.getMaximumSizeEver()+"</td><td>"+
+          cs.getMaximumEverSize()+"</td><td>"+
           getMeanSize(cs)+"</td><td>"+
-          cs.getTotalCapacity()+"</td><td>"+
-          cs.getMaximumCapacity()+"</td><td>"+
-          cs.getMaximumCapacityEver()+"</td><td>"+
-          getMeanCapacity(cs)+"</td></tr>\n");
+          cs.getSumCapacityCount()+"</td><td>"+
+          cs.getMaximumCapacityCount()+"</td><td>"+
+          cs.getMaximumEverCapacityCount()+"</td><td>"+
+          getMeanCapacityCount(cs)+"</td></tr>\n");
     }
 
     private void printType() {
@@ -381,48 +388,49 @@ extends ComponentServlet
 
       // instance view options:
       out.println(
+          "<p>"+
           "<i>Sort by:</i>"+
           "<select name=\""+REQ_INCREASING+"\">"+
           "  <option selected value=\"false\">decreasing</option>"+
           "  <option value=\"true\">increasing</option>"+
           "</select>"+
-          "<select name=\""+REQ_SORT+"\">"+
-          "  <option selected>"+Comparators.TIME+"</option>"+
-          "  <option>"+Comparators.COMPARE_TO+"</option>"+
-          "  <option>"+Comparators.HASHCODE+"</option>"+
-          "  <option>uniq_"+Groupings.STACK+"</option>"+
-          "  <option>uniq_"+Groupings.TIME+"</option>"+
-          "  <option>uniq_"+Groupings.SECOND+"</option>"+
-          "  <option>uniq_"+Groupings.MINUTE+"</option>"+
-          "  <option>uniq_"+Groupings.HOUR+"</option>"+
-          "  <option>uniq_"+Groupings.HASHCODE+"</option>"+
-          "  <option>uniq_"+Groupings.EQUALS+"</option>"+
-          "  <option>uniq_"+Groupings.TO_STRING+"</option>"+
-          "  <option>"+Comparators.SIZE+"</option>"+
-          "  <option>"+Comparators.CAPACITY+"</option>"+
-          "  <option>"+Comparators.MAX_SIZE+"</option>"+
-          "  <option>"+Comparators.MAX_CAPACITY+"</option>"+
-          "  <option>"+Comparators.EXCESS_CAPACITY+"</option>"+
+          "<select name=\""+REQ_SORT+"\">");
+      String[] comp_names = Comparators.getNames();
+      for (int i = 0; i < comp_names.length; i++) {
+        String s = comp_names[i];
+        out.println(
+            "  <option"+
+            (i == 0 ? " selected" : "")+
+            ">"+s+"</option>");
+      }
+      String[] group_names = Groupings.getNames("uniq_");
+      for (int i = 0; i < group_names.length; i++) {
+        String s = group_names[i];
+        out.println(
+            "  <option"+
+            ((i == 0 && comp_names.length == 0) ?
+             " selected" :
+             "")+
+            ">"+s+"</option>");
+      }
+      out.println(
           "  <option>none</option>"+
           "</select>"+
           "<br>\n"+
           "<i>Number of rows:</i>"+
           "<input name=\""+REQ_ROWS+
           "\" type=\"text\" value=\"20\"><br/>"+
-          "<br>\n"+
           "<i>Number of lines in stack trace:</i>"+
           "<input name=\""+REQ_STACK_LINES+
           "\" type=\"text\" value=\"8\"><br/>"+
-          "<br>\n"+
           "<i>Show toString:</i>"+
           "<input type=\"checkbox\""+
           " name=\""+REQ_TO_STRING_ENABLE+
           "\" value=\"true\">"+
           "<input name=\""+REQ_TO_STRING_LIMIT+
           "\" type=\"text\" value=\"1000\"><br/>"+
-          "<br>\n"+
           "<input type=\"submit\" value=\"Submit\"/>"+
-          "<br>\n"+
+          "<br/>\n"+
           "</form>");
     }
 
@@ -446,7 +454,9 @@ extends ComponentServlet
           total+
           " <code>"+
           getShortName(type)+
-          "</code>'s<p/>");
+          "</code>'s"+
+          (sort == null ? "" : " by "+sort)+
+          "<p/>");
 
       if (sort != null && sort.startsWith("uniq_")) {
         String group = sort.substring(5);
@@ -554,8 +564,8 @@ extends ComponentServlet
       out.println("<td align=right>"+(t - now)+"</td>");
       out.println("<td align=right>"+is.getSize()+"</td>");
       out.println("<td align=right>"+is.getMaximumSize()+"</td>");
-      out.println("<td align=right>"+is.getCapacity()+"</td>");
-      out.println("<td align=right>"+is.getMaximumCapacity()+"</td>");
+      out.println("<td align=right>"+is.getCapacityCount()+"</td>");
+      out.println("<td align=right>"+is.getMaximumCapacityCount()+"</td>");
 
       out.println("<td>");
       out.println("<font size=\"2\">");
@@ -650,16 +660,16 @@ extends ComponentServlet
       if (n <= 0) {
         return "0.0";
       }
-      double mean = ((double) cs.getTotalSize() / n);
+      double mean = ((double) cs.getSumSize() / n);
       return format(mean);
     }
 
-    private static String getMeanCapacity(ClassStats cs) {
+    private static String getMeanCapacityCount(ClassStats cs) {
       long n = cs.getInstances();
       if (n <= 0) {
         return "0.0";
       }
-      double mean = ((double) cs.getTotalCapacity() / n);
+      double mean = ((double) cs.getSumCapacityCount() / n);
       return format(mean);
     }
 
