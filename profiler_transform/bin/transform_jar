@@ -1,0 +1,296 @@
+#!/bin/sh
+
+# <copyright>
+#  Copyright 2001-2003 BBNT Solutions, LLC
+#  under sponsorship of the Defense Advanced Research Projects Agency (DARPA).
+# 
+#  This program is free software; you can redistribute it and/or modify
+#  it under the terms of the Cougaar Open Source License as published by
+#  DARPA on the Cougaar Open Source Website (www.cougaar.org).
+# 
+#  THE COUGAAR SOFTWARE AND ANY DERIVATIVE SUPPLIED BY LICENSOR IS
+#  PROVIDED 'AS IS' WITHOUT WARRANTIES OF ANY KIND, WHETHER EXPRESS OR
+#  IMPLIED, INCLUDING (BUT NOT LIMITED TO) ALL IMPLIED WARRANTIES OF
+#  MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE, AND WITHOUT
+#  ANY WARRANTIES AS TO NON-INFRINGEMENT.  IN NO EVENT SHALL COPYRIGHT
+#  HOLDER BE LIABLE FOR ANY DIRECT, SPECIAL, INDIRECT OR CONSEQUENTIAL
+#  DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE OF DATA OR PROFITS,
+#  TORTIOUS CONDUCT, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+#  PERFORMANCE OF THE COUGAAR SOFTWARE.
+# </copyright>
+
+#
+# transform jar
+#
+# run with "--help" for usage notes.
+#
+
+usage () {
+  cat <<EOF
+Usage:
+  $0 TYPE MODULE [FILTER ..]
+
+  TYPE      "jdk" or "cougaar"
+  MODULE    module name (e.g. "core")
+  FILTER    optional filter path(s)
+
+Adds profiling instructions to classes in the specified
+module's jar file.
+
+Examples:
+  # profile all of java.util.*,
+  # create new \$CIP/lib/javautilpatch.jar
+  $0 jdk util
+
+  # profile all of Cougaar core,
+  # create new \$CIP/lib/core.jar
+  $0 cougaar core
+
+  # profile some of Cougaar planning,
+  # create new \$CIP/lib/planning.jar
+  $0 cougaar planning org/cougaar/planning/ldm org/cougaar/planning/plugin
+EOF
+}
+
+if [ -z $2 ] || [ $1 = --help ]; then
+  usage
+  exit -1
+fi
+
+TYPE=$1
+MODULE=$2
+shift 2
+FILTERS=$*
+
+VERBOSE=
+
+CIP=$COUGAAR_INSTALL_PATH
+
+BCEL=$CIP/sys/bcel.jar
+
+DEPENDENCY_FILE="$CIP/build/data/default.build"
+
+if [ -z $CIP ]; then
+  CIP=../
+fi
+if [ ! -d $CIP ]; then
+  Update the $0 script\'s \$CIP variable
+  exit -1
+fi
+export COUGAAR_INSTALL_PATH=$CIP
+
+if [ ! -f $BCEL ]; then
+  echo "BCEL-5.1 jar not found: $BCEL"
+  exit -1
+fi
+
+restore_jars () {
+  FROM=$CIP/lib/$MODULE.jar
+  if [ -L $FROM ]; then
+    if [ -f $CIP/lib/$MODULE.jar.old ]; then
+      # restore backup
+      rm $FROM || exit -1
+      if [ -f $CIP/lib/$MODULE.jar.new ]; then
+        rm $CIP/lib/$MODULE.jar.new || exit -1
+      fi
+      ln -s $CIP/lib/$MODULE.jar.old $FROM || exit -1
+    fi
+  elif [ -f $FROM ]; then
+    # make backup
+    mv $FROM $CIP/lib/$MODULE.jar.old || exit -1
+    ln -s $CIP/lib/$MODULE.jar.old $FROM || exit -1
+  fi
+}
+
+commit_jars () {
+  # create link to our new jar
+  if [ -L $CIP/lib/$MODULE.jar ]; then
+    rm $CIP/lib/$MODULE.jar
+  fi
+  if [ ! -f $CIP/lib/$MODULE.jar ]; then
+    ln -s $CIP/lib/$MODULE.jar.new $CIP/lib/$MODULE.jar
+  fi
+}
+
+prepare_jdk () {
+  NAME=$1
+
+  echo "transforming $MODULE"
+
+  restore_jars
+  FROM=$JAVA_HOME/jre/lib/rt.jar
+
+  if [ ! -d $CIP/$MODULE/old/classes ]; then
+    echo "  creating $MODULE"
+
+    # figure out overlay
+    OVERLAY=
+    if [ $NAME = io ]; then
+      # include Cougaar's custom javaiopatch overlay
+      if [ -f $CIP/lib/$MODULE.jar.old ]; then
+        OVERLAY=$CIP/lib/$MODULE.jar.old
+      elif [ -f $CIP/lib/$MODULE.jar ]; then
+        OVERLAY=$CIP/lib/$MODULE.jar
+      fi
+    fi
+
+    # unzip classes to be transformed ("old")
+    cd $CIP || exit -1
+    mkdir -p $MODULE/old/classes || exit -1
+    cd $MODULE/old/classes || exit -1
+    unzip -q $FROM $FILTERS || exit -1
+    find . -type d -exec chmod 777 {} \; || exit -1
+    if [ ! -z $OVERLAY ]; then
+      unzip -q -o $OVERLAY "java/$NAME/*" || exit -1
+    fi
+
+    # unzip the rest ("new")
+    cd $CIP || exit -1
+    mkdir -p $MODULE/new/old/classes || exit -1
+    cd $MODULE/new/old/classes || exit -1
+    unzip -q $FROM "java/$NAME/*" || exit -1
+    find . -type d -exec chmod 777 {} \; || exit -1
+    if [ ! -z $OVERLAY ]; then
+      unzip -q -o $OVERLAY "java/$NAME/*" || exit -1
+    fi
+  fi
+}
+
+prepare_cougaar () {
+  echo "transforming $MODULE"
+  cd $CIP || exit -1
+
+  restore_jars
+  FROM=$CIP/lib/$MODULE.jar
+
+  if [ ! -d $CIP/$MODULE/old/classes ]; then
+    echo "  creating $MODULE"
+
+    # unzip classes to be transformed ("old")
+    mkdir -p $MODULE/old/classes || exit -1
+    cd $MODULE/old/classes || exit -1
+    unzip -q $FROM $FILTERS || exit -1
+    find . -type d -exec chmod 777 {} \; || exit -1
+
+    # unzip the rest ("new")
+    mkdir -p $MODULE/new/old/classes || exit -1
+    if [ ! -z $FILTERS ]; then
+      cd $MODULE/new/old/classes || exit -1
+      unzip -q $FROM "java/$NAME/*" || exit -1
+      find . -type d -exec chmod 777 {} \; || exit -1
+    fi
+  fi
+}
+
+get_dependency () {
+  if [ ! -f $DEPENDENCY_FILE ]; then
+    cat <<EOF
+Unable to find build "classpath" dependency file:
+  $DEPENDENCY_FILE
+
+For example, if we're transforming:
+  $CIP/lib/foo.jar
+and "foo" has compile dependencies upon:
+  lib/a.jar
+  lib/b.jar
+  lib/c.jar
+  sys/x.jar
+  sys/y.jar
+then dependency file should contain:
+  foo.deps = a,b,c
+  foo.jars = x,y
+which is parsed into:
+  LIB=\
+    $CIP/lib/a.jar:$CIP/lib/b.jar:$CIP/lib/c.jar:\
+    $CIP/sys/x.jar:$CIP/sys/y.jar
+  javac ... -classpath $LIB:<etc> ...
+EOF
+    exit -1
+  fi
+
+  # parse file
+  RET=`perl -ne\
+    'print join(" ", split(/,/, $1)) if (/^\s*'${2}'\s*=\s*(.*)$/);'\
+    $DEPENDENCY_FILE`
+
+  eval "$1=\"$RET\""
+}
+
+get_classpath () {
+  # get jar dependencies from "default.build"
+  get_dependency SEPLIB "${MODULE}\.deps"
+  get_dependency SEPSYS "${MODULE}\.jars"
+
+  LIBDEP="$CIP/lib/$MODULE.jar"
+  for x in $SEPLIB; do
+    if [ ! -f $CIP/lib/$x.jar ]; then
+      echo Missing $CIP/lib/$x.jar required for module $MODULE
+      exit -1
+    fi
+    LIBDEP="$LIBDEP:$CIP/lib/$x.jar"
+  done
+  SYSDEP="$CIP/lib/javaiopatch.jar"
+  for x in $SEPSYS; do
+    if [ ! -f $CIP/sys/$x.jar ]; then
+      echo Missing $CIP/sys/$x.jar required for module $MODULE
+      exit -1
+    fi
+    SYSDEP="$SYSDEP:$CIP/sys/$x.jar"
+  done
+
+  RET="$LIBDEP:$SYSDEP"
+
+  eval "$1=\"$RET\""
+}
+
+transform () {
+  LIB=$1
+
+  CP="$BCEL:$CIP/lib/profiler_transform.jar:$CIP/lib/profiler_impl.jar"
+  if [ ! -z $LIB ]; then
+    CP="$CP:$LIB"
+  fi
+
+  cd $CIP/$MODULE || exit -1
+  COMMAND="java \
+    -classpath $CP\
+    org.cougaar.profiler.transform.ProfileAll\
+    old"
+  if [ ! -z $VERBOSE ]; then
+    echo $COMMAND
+  fi
+  $COMMAND || exit -1
+  if [ ! -d new/old/classes ]; then
+    echo "Transform $MODULE failed, missing $CIP/new/old/classes"
+    exit -1
+  fi
+  cd new/old/classes || exit -1
+  jar cf $CIP/lib/$MODULE.jar.new * || exit -1
+
+  commit_jars
+}
+
+transform_jdk () {
+  NAME=$MODULE
+  MODULE="java${MODULE}patch"
+  if [ -z $FILTERS ]; then
+    FILTERS="java/${NAME}/*"
+  fi
+  prepare_jdk $NAME
+  transform
+}
+
+transform_cougaar () {
+  prepare_cougaar
+  get_classpath LIB
+  transform $LIB
+}
+
+if [ $TYPE = jdk ]; then
+  transform_jdk
+elif [ $TYPE = cougaar ]; then
+  transform_cougaar
+else
+  usage
+  exit -1
+fi
