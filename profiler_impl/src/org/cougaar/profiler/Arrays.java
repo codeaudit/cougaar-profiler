@@ -30,7 +30,7 @@ package org.cougaar.profiler;
 public final class Arrays {
 
   // array header size in bytes
-  private static final int HEADER = 8;
+  private static final int HEADER = 12;
 
   // does InstanceStats support arrays yet?
   private static final boolean LENGTH = false;

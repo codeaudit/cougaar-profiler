@@ -25,8 +25,6 @@
 # transform Cougaar packages (core)
 #
 
-CIP=$COUGAAR_INSTALL_PATH
-
 PROFILER_MODULES="\
   profiler_impl\
   profiler_transform\
@@ -43,11 +41,13 @@ COUGAAR_MODULES="\
 
 TRANSFORM="$CIP/profiler_transform/bin/transform_jar"
 
-if [ ! -d $CIP ]; then
-  Update the $0 script\'s \$CIP variable
+if [ -z $CIP ]; then
+  CIP=$COUGAAR_INSTALL_PATH
+fi
+if [ -z $CIP ]; then
+  echo "\$COUGAAR_INSTALL_PATH not set"
   exit -1
 fi
-export COUGAAR_INSTALL_PATH=$CIP
 
 # compile the profiler modules
 for x in $PROFILER_MODULES; do
@@ -58,6 +58,7 @@ for x in $PROFILER_MODULES; do
   ant install || exit -1
 done
 
+exit 0
 if [ ! -f $TRANSFORM ]; then
   echo "transform script not found: $TRANSFORM"
   exit -1

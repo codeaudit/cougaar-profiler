@@ -40,7 +40,8 @@ public class ClassTracker extends MemoryTracker {
       int bytes,
       boolean has_size,
       boolean has_capacity) {
-    if (Configure.CAPTURE_STACK &&
+    if ((Configure.CAPTURE_SIZE ||
+          Configure.SUMMARY_SIZE) &&
         (has_size || has_capacity)) {
       return new PlusSize(classname, bytes);
     } else {
@@ -80,6 +81,7 @@ public class ClassTracker extends MemoryTracker {
       return (agents == null ? (new String[0]) : agents.getNames());
     }
   }
+
   /** @return stats for a specific agent */
   public ClassStats getAgentStats(String agent) {
     synchronized (lock) {
@@ -126,7 +128,7 @@ public class ClassTracker extends MemoryTracker {
           new_o,
           Configure.CAPTURE_TIME,
           Configure.CAPTURE_STACK,
-          false, // see subclass
+          Configure.CAPTURE_SIZE,
           Configure.CAPTURE_CONTEXT);
   }
   protected void updateInstanceStats(InstanceStats current) {
@@ -209,25 +211,34 @@ public class ClassTracker extends MemoryTracker {
       super(classname, bytes);
     }
 
-    protected InstanceStats newInstanceStats(Object new_o) {
-      return
-        InstanceStats.newInstanceStats(
-            new_o,
-            Configure.CAPTURE_TIME,
-            Configure.CAPTURE_STACK,
-            true,
-            Configure.CAPTURE_CONTEXT);
-    }
     protected void updateInstanceStats(InstanceStats current) {
       // update the entry
       current.update();
 
-      String agent = current.getAgentName();
-      long size = (long) current.getSize();
-      long capacity = (long) current.getCapacity();
-      long maxSize = (long) current.getMaximumSize();
-      long maxCapacity = (long) current.getMaximumCapacity();
+      long size;
+      long capacity_count;
+      long capacity_bytes;
+      long max_size;
+      long max_capacity_count;
+      long max_capacity_bytes;
 
+      if (Configure.CAPTURE_SIZE) {
+        size = (long) current.getSize();
+        capacity_count = (long) current.getCapacityCount();
+        capacity_bytes = (long) current.getCapacityBytes();
+        max_size = (long) current.getMaximumSize();
+        max_capacity_count = (long) current.getMaximumCapacityCount();
+        max_capacity_bytes = (long) current.getMaximumCapacityBytes();
+      } else {
+        size = (long) current.currentSize();
+        capacity_count = (long) current.currentCapacityCount();
+        capacity_bytes = (long) current.currentCapacityBytes();
+        max_size = size;
+        max_capacity_count = capacity_count;
+        max_capacity_bytes = capacity_bytes;
+      }
+
+      String agent = current.getAgentName();
       if (agent != null) {
         if (agents == null) {
           agents = new AgentsTable();
@@ -240,10 +251,21 @@ public class ClassTracker extends MemoryTracker {
         // We could increment a counter every time a collection is created,
         // but this would require to lookup the subject information.
         cs.allocate(current);
-        cs.update(size, maxSize, capacity, maxCapacity);
+        cs.update(
+            size,
+            capacity_count,
+            capacity_bytes,
+            max_size,
+            max_capacity_count,
+            max_capacity_bytes);
       }
       overall_stats.update(
-          size, maxSize, capacity, maxCapacity);
+            size,
+            capacity_count,
+            capacity_bytes,
+            max_size,
+            max_capacity_count,
+            max_capacity_bytes);
     }
     protected ClassStats newClassStats() {
       return ClassStats.newClassStats(true);

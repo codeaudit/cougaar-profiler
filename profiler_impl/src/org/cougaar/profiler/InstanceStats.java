@@ -33,11 +33,8 @@ public class InstanceStats {
   // costs 40 bytes
 
   //
-  // RFE: we could add these fields to the instance itself, since
-  // we're modifying its bytecode anyways.  We would need to tag
-  // the class with a new InstanceStats interface and add the
-  // necessary fields and methods.  A change in profiling detail
-  // may require modifying the class to add/remove fields.
+  // RFE: could we add these fields to the instance itself, since
+  // we're modifying its bytecode anyways?
   // 
 
   /** A WeakReference to the object. */
@@ -61,19 +58,27 @@ public class InstanceStats {
   }
   /** Most recent "size()" calculation */
   public int getSize() {
-    return 0;
-  }
-  /** Most recent "capacity()" calculation */
-  public int getCapacity() {
-    return 0;
+    return (Configure.SUMMARY_SIZE ? currentSize() : 0);
   }
   /** Maximum observed size */
   public int getMaximumSize() {
-    return 0;
+    return getSize();
   }
-  /** Maximum observed capacity */
-  public int getMaximumCapacity() {
-    return 0;
+  /** Most recent "capacity_count()" calculation */
+  public int getCapacityCount() {
+    return (Configure.SUMMARY_SIZE ? currentCapacityCount() : 0);
+  }
+  /** Maximum observed capacity count */
+  public int getMaximumCapacityCount() {
+    return getCapacityCount();
+  }
+  /** Most recent "capacity_bytes()" calculation */
+  public int getCapacityBytes() {
+    return (Configure.SUMMARY_SIZE ? currentCapacityBytes() : 0);
+  }
+  /** Maximum observed capacity bytes */
+  public int getMaximumCapacityBytes() {
+    return getCapacityBytes();
   }
   /** Context when allocated (based upon threadlocals */
   public InstanceContext getInstanceContext() {
@@ -82,6 +87,46 @@ public class InstanceStats {
   /** Same as "getInstanceContext.getAgentName()" */
   public String getAgentName() {
     return null;
+  }
+
+  /** current size */
+  public int currentSize() {
+    Object o = get();
+    if (o instanceof Size) {
+      try {
+        return ((Size) o).$get_size();
+      } catch (Exception e) {
+        System.err.println("Failed \"$get_size()\":");
+        e.printStackTrace();
+      }
+    }
+    return 0;
+  }
+  /** current capacity count */
+  public int currentCapacityCount() {
+    Object o = get();
+    if (o instanceof Capacity) {
+      try {
+        return ((Capacity) o).$get_capacity_count();
+      } catch (Exception e) {
+        System.err.println("Failed \"$get_capacity_count()\":");
+        e.printStackTrace();
+      }
+    }
+    return 0;
+  }
+  /** current capacity bytes */
+  public int currentCapacityBytes() {
+    Object o = get();
+    if (o instanceof Capacity) {
+      try {
+        return ((Capacity) o).$get_capacity_bytes();
+      } catch (Exception e) {
+        System.err.println("Failed \"$get_capacity_bytes()\":");
+        e.printStackTrace();
+      }
+    }
+    return 0;
   }
 
   void update() {
@@ -155,12 +200,14 @@ public class InstanceStats {
   //
 
   private static class WithSize extends InstanceStats {
-    // this adds 20 bytes to the basic size, for a total
-    // of 60 bytes
+    // this adds 24 bytes to the basic size, for a total
+    // of 64 bytes
     private int size;
-    private int capacity;
-    private int maxSize;
-    private int maxCapacity;
+    private int capacity_count;
+    private int capacity_bytes;
+    private int max_size;
+    private int max_capacity_count;
+    private int max_capacity_bytes;
     public WithSize(WeakReference ref) {
       super(ref);
     }
@@ -168,42 +215,69 @@ public class InstanceStats {
       Object o = get();
       if (o == null) {
         size = 0;
-        capacity = 0;
+        capacity_count = 0;
+        capacity_bytes = 0;
         return;
       }
       // update capacity:
       if (o instanceof Capacity) {
+        Capacity c = (Capacity) o;
         try {
-          capacity = ((Capacity) o).$get_capacity();
+          capacity_count = c.$get_capacity_count();
         } catch (Exception e) {
-          System.err.println("Failed \"$get_capacity()\":");
+          System.err.println("Failed \"$get_capacity_count()\":");
           e.printStackTrace();
         }
-        if (maxCapacity < capacity) {
-          maxCapacity = capacity;
+        if (max_capacity_count < capacity_count) {
+          max_capacity_count = capacity_count;
+        }
+        try {
+          capacity_bytes = c.$get_capacity_bytes();
+        } catch (Exception e) {
+          System.err.println("Failed \"$get_capacity_bytes()\":");
+          e.printStackTrace();
+        }
+        if (max_capacity_bytes < capacity_bytes) {
+          max_capacity_bytes = capacity_bytes;
         }
       } else {
-        capacity = 0;
+        capacity_count = 0;
+        capacity_bytes = 0;
       }
       // update size:
       if (o instanceof Size) {
+        Size s = (Size) o;
         try {
-          size = ((Size) o).$get_size();
+          size = s.$get_size();
         } catch (Exception e) {
           System.err.println("Failed \"$get_size()\":");
           e.printStackTrace();
         }
       } else {
-        size = capacity;
+        size = capacity_count;
       } 
-      if (maxSize < size) {
-        maxSize = size;
+      if (max_size < size) {
+        max_size = size;
       }
     }
-    public int getSize() { return size; }
-    public int getCapacity() { return capacity; }
-    public int getMaximumSize() { return maxSize; }
-    public int getMaximumCapacity() { return maxCapacity; }
+    public int getSize() {
+      return size;
+    }
+    public int getCapacityCount() {
+      return capacity_count;
+    }
+    public int getCapacityBytes() {
+      return capacity_bytes;
+    }
+    public int getMaximumSize() {
+      return max_size;
+    }
+    public int getMaximumCapacityCount() {
+      return max_capacity_count;
+    }
+    public int getMaximumCapacityBytes() {
+      return max_capacity_bytes;
+    }
   }
   private static class WithTime extends InstanceStats {
     // this adds 8 bytes to the basic size, for a total
@@ -219,7 +293,7 @@ public class InstanceStats {
   }
   private static class WithTimeSize extends WithSize {
     // this adds 8 bytes to the super's size, for a total
-    // of 68 bytes
+    // of 72 bytes
     private final long time;
     public WithTimeSize(WeakReference ref, long time) {
       super(ref);
@@ -257,7 +331,7 @@ public class InstanceStats {
     }
   }
   private static class WithTimeStackSize extends WithTimeSize {
-    // same as above WithTimeStack + 20 bytes for size metrics
+    // same as above WithTimeStack + 24 bytes for size metrics
     private final Throwable stack;
     public WithTimeStackSize(
         WeakReference ref,

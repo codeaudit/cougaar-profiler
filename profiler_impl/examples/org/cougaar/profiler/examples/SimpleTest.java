@@ -35,11 +35,17 @@ public class SimpleTest {
 
     pause(1000);
 
-    // create a map and serialize it
-    Object o = new HashMap(5000);
-    ((Map) o).put("foo", "bar");
+    // create dummy map
+    Map m = new HashMap();
+    for (int i = 0; i < 1234; i++) {
+      m.put("foo"+i, "bar"+i);
+    }
+    Object o = m;
+    m = null;
+
+    // serialize it
     byte[] b = serialize(o);
-    System.out.println("serialized "+o);
+    System.out.println("serialized (hc="+o.hashCode()+")");
     o = null;
     printStats();
 
@@ -54,7 +60,7 @@ public class SimpleTest {
 
     // deserialize it
     o = deserialize(b);
-    System.out.println("deserialized "+o);
+    System.out.println("deserialized (hc="+o.hashCode()+")");
     printStats();
 
     System.out.println("end ");
@@ -66,94 +72,151 @@ public class SimpleTest {
     MemoryStats tracker = MemoryStatsImpl.getInstance();
 
     // print class summary
-    printClassStats(tracker);
+    //printAllClassStats(tracker);
 
-    // print largest ObjectInputStreams
-    int maxRows = 5;
-    int maxLines = 5;
-    String type = "java.io.ObjectOutputStream";
-    printInstanceStats(tracker, type, maxRows, maxLines);
+    // print largest Maps
+    String classname = "java.util.HashMap";
+    int maxInstances = 3;
+    int maxToString = 100;
+    int maxStackLines = 12;
+    printInstanceStats(
+        tracker,
+        classname,
+        maxInstances,
+        maxToString,
+        maxStackLines);
 
     System.out.println("-----------------------------------------------");
   }
 
-  public static void printClassStats(MemoryStats tracker) {
+  public static void printAllClassStats(MemoryStats tracker) {
     String[] classes = tracker.getClassNames();
     int n = classes.length;
     System.out.println("class_stats["+n+"]:");
     for (int i = 0 ; i < n; i++) {
-      String cl = classes[i];
-      ClassTracker ct = tracker.getClassTracker(cl);
-      System.out.println(ct);
-      System.out.println("update("+cl+")");
-      // force an update
+      String classname = classes[i];
+      ClassTracker ct = tracker.getClassTracker(classname);
+      // force update
       InstanceStats[] ignoreme = ct.update();
-      ClassStats cs = ct.getOverallStats();
-      long instances = cs.getInstances();
-      long collected = cs.getGarbageCollected();
-      System.out.println(
-          "  type="+cl+
-          "\n    instances:           "+instances+
-          "\n    gc'ed:               "+collected+
-          "\n    total:               "+(instances + collected)+
-          "\n    total_size:          "+cs.getTotalSize()+
-          "\n    total_capacity:      "+cs.getTotalCapacity()+
-          "\n    mean_size:           "+getMeanSize(cs)+
-          "\n    mean_capacity:       "+getMeanCapacity(cs)
-          );
+      printClassStats(ct);
     }
+  }
+
+  public static void printClassStats(ClassTracker ct) {
+    ClassStats cs = ct.getOverallStats();
+    int bytes_each = ct.getObjectSize();
+    long live = cs.getInstances();
+    long dead = cs.getGarbageCollected();
+    long sum_capacity_bytes = cs.getSumCapacityBytes();
+    long mem = (live * bytes_each + sum_capacity_bytes);
+    System.out.println(
+        ct.getClassName()+"{"+
+        "\n  memory:             "+mem+
+        "\n  live:               "+live+
+        "\n  gc'ed:              "+dead+
+        "\n  total:              "+(live + dead)+
+        "\n  sum_size:           "+cs.getSumSize()+
+        "\n  sum_capacity_count: "+cs.getSumCapacityCount()+
+        "\n  sum_capacity_bytes: "+sum_capacity_bytes+
+        "\n}"
+        );
   }
 
   public static void printInstanceStats(
       MemoryStats tracker,
-      String type,
-      int maxRows,
-      int maxLines) {
-    ClassTracker ct = tracker.getClassTracker(type);
+      String classname,
+      int maxInstances,
+      int maxToString,
+      int maxStackLines) {
+    ClassTracker ct = tracker.getClassTracker(classname);
     if (ct == null) {
-      System.out.println("not tracked: "+type);
+      System.out.println("not tracked: "+classname);
       return;
     }
-    ClassStats cs = ct.getOverallStats();
-    long numInstances = cs.getInstances();
-    InstanceStats[] iss = ct.update();
 
-    List l = trim(Arrays.asList(iss), maxRows);
-    Collections.sort(l, Comparators.DECREASING_SIZE_COMPARATOR);
+    // force update
+    InstanceStats[] iss = ct.update();
+    int n = Math.min(maxInstances, iss.length);
+
+    // print overview
+    printClassStats(ct);
+
+    // sort by "size()"
+    Comparators.sort(iss, Comparators.DECREASING, Comparators.SIZE);
 
     System.out.println(
-        "instance_stats["+l.size()+ " of "+numInstances+"]:"+
-        "\n  type:            "+type);
+        classname+" instances sorted by largest \"size()\""+
+       "\nshowing "+n+" of "+iss.length);
 
-    for (int i = 0, n = l.size(); i < n; i++) {
-      InstanceStats is = (InstanceStats) l.get(i);
-      Object o = is.get();
+    for (int i = 0; i < n; i++) {
+      System.out.println("instance["+i+"]:");
+      printInstanceStats(iss[i], maxToString, maxStackLines);
+    }
+  }
+
+  public static void printInstanceStats(
+      InstanceStats is,
+      int maxToString,
+      int maxStackLines) {
+    Object o = is.get();
+    String str;
+    int hc;
+    if (o == null) {
+      str = null;
+      hc = -1;
+    } else {
+      try {
+        str = o.toString();
+        hc = o.hashCode();
+      } catch (Exception e) {
+        str = e.getMessage();
+        hc = -1;
+      }
+    }
+    if (str == null) {
+      str = "null";
+    }
+    if (str.length() > maxToString) {
+      str =
+        str.substring(0, maxToString)+
+        " +"+
+        (str.length()-maxToString);
+    }
+    System.out.print(
+        "    null:               "+(o == null)+
+        "\n    toString:           "+str+
+        "\n    hashcode:           "+Integer.toHexString(hc)+
+        "\n    size:               "+is.getSize()+
+        "\n    max_size:           "+is.getMaximumSize()+
+        "\n    capacity_count:     "+is.getCapacityCount()+
+        "\n    max_capacity_count: "+is.getMaximumCapacityCount()+
+        "\n    capacity_bytes:     "+is.getCapacityBytes()+
+        "\n    max_capacity_bytes: "+is.getMaximumCapacityBytes()+
+        "\n    agent:              "+is.getAgentName()+
+        "\n    ");
+    printStack(is.getThrowable(), maxStackLines);
+  }
+
+  private static void printStack(
+      Throwable throwable,
+      int maxStackLines) {
+    if (throwable == null) {
+      System.out.println("allocation-point stack[]");
+      return;
+    }
+    StackTraceElement ste[] = throwable.getStackTrace();
+    int LINES_TO_SKIP = 5; // lines within the profiler
+    int lines = Math.min(ste.length, maxStackLines+LINES_TO_SKIP);
+    System.out.println(
+        "stack["+
+        (lines-LINES_TO_SKIP)+" of "+ste.length+"]:");
+    for (int j = LINES_TO_SKIP; j < lines; j++) {
       System.out.println(
-          "    hashcode:         "+
-          (o == null ? "null" : Integer.toHexString(o.hashCode())));
-      System.out.println("    current_size:     "+is.getSize());
-      System.out.println("    max_size:         "+is.getMaximumSize());
-      System.out.println("    current_capacity: "+is.getCapacity());
-      System.out.println("    max_capacity:     "+is.getMaximumCapacity());
-      System.out.println("    agent:            "+is.getAgentName());
-      System.out.print(  "    stack[");
-      Throwable throwable = is.getThrowable();
-      if (throwable == null) {
-        System.out.println("]");
-        continue;
-      }
-      StackTraceElement ste[] = throwable.getStackTrace();
-      int LINES_TO_SKIP = 4; // lines within the profiler
-      int lines = Math.min(ste.length, maxLines+LINES_TO_SKIP);
-      System.out.println((lines-LINES_TO_SKIP)+" of "+ste.length+"]:");
-      for (int j = LINES_TO_SKIP; j < lines; j++) {
-        System.out.println(
-            "    "+
-            ste[j].getClassName()+"."+
-            ste[j].getMethodName()+"("+
-            ste[j].getFileName()+":"+
-            ste[j].getLineNumber()+")");
-      }
+          "      "+
+          ste[j].getClassName()+"."+
+          ste[j].getMethodName()+"("+
+          ste[j].getFileName()+":"+
+          ste[j].getLineNumber()+")");
     }
   }
 
@@ -163,6 +226,7 @@ public class SimpleTest {
     } catch (Exception e) {
     }
   }
+
   private static byte[] serialize(Object o) {
     try {
       ByteArrayOutputStream bos = new ByteArrayOutputStream();
@@ -185,35 +249,5 @@ public class SimpleTest {
     } catch (Exception e) {
       throw new RuntimeException("deserialize failure", e);
     }
-  }
-
-  private static List trim(List l, int max) {
-    List ret = l;
-    int total = (l == null ? 0 : l.size());
-    int limit = Math.min(max, total);
-    if (max > limit) {
-      try {
-        ret = new ArrayList(l.subList(0, limit));
-      } catch (IndexOutOfBoundsException e) {
-        System.out.println("Error: " + e);
-      }
-    }
-    return ret;
-  }
-
-  private static double getMeanSize(ClassStats cs) {
-    double mean =
-      ((double)(cs.getTotalSize()) /
-       (double)(cs.getInstances())) * 100;
-    mean = ((double)Math.round(mean) ) / 100;
-    return mean;
-  }
-
-  private static double getMeanCapacity(ClassStats cs) {
-    double mean = 
-      ((double)(cs.getTotalCapacity()) /
-       (double)(cs.getInstances())) * 100;
-    mean = ((double)Math.round(mean) ) / 100;
-    return mean;
   }
 }

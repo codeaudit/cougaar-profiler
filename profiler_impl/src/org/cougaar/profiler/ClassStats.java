@@ -24,8 +24,8 @@ package org.cougaar.profiler;
  * Class data for objects of the same type.
  */
 public class ClassStats {
-  private long      instances;
-  private long      collected;
+  private long live;
+  private long dead;
 
   private ClassStats() { }
 
@@ -39,39 +39,50 @@ public class ClassStats {
 
   /** The number of live objects */
   public final long getInstances() {
-    return instances;
+    return live;
   }
 
   /** The number of objects that have been garbage collected. */
   public final long getGarbageCollected() {
-    return collected;
+    return dead;
   }
 
   /** The sum of all sizes of live objects. */
-  public long getTotalSize() { return 0; }
+  public long getSumSize() { return 0; }
 
   /** The maximum object size of live objects.  */
   public long getMaximumSize() { return 0; }
 
   /** The maximum object size ever observed (live or dead). */
-  public long getMaximumSizeEver() { return 0; }
+  public long getMaximumEverSize() { return 0; }
 
   /** The sum of all capacities of live objects. */
-  public long getTotalCapacity() { return 0; }
+  public long getSumCapacityCount() { return 0; }
 
   /** The maximum object capacity of live objects. */
-  public long getMaximumCapacity() { return 0; }
+  public long getMaximumCapacityCount() { return 0; }
 
   /** The maximum object capacity ever observed (live or dead). */
-  public long getMaximumCapacityEver() { return 0; }
+  public long getMaximumEverCapacityCount() { return 0; }
+
+  /** The sum of all capacities of live objects. */
+  public long getSumCapacityBytes() { return 0; }
+
+  /** The maximum object capacity of live objects. */
+  public long getMaximumCapacityBytes() { return 0; }
+
+  /** The maximum object capacity ever observed (live or dead). */
+  public long getMaximumEverCapacityBytes() { return 0; }
 
   void reset() {
   }
   void update(
-    long size,
-    long maxSize,
-    long capacity,
-    long maxCapacity) {
+      long size,
+      long capacityCount,
+      long capacityBytes,
+      long maxSize,
+      long maxCapacityCount,
+      long maxCapacityBytes) {
   }
 
   // allocate/gc an instance.  We pass the instance stats to allow
@@ -84,64 +95,103 @@ public class ClassStats {
   // or we could calculate the life expectancy for each unique
   // allocation stacktrace, etc.
   final void allocate(InstanceStats is) {
-    instances++;
+    live++;
   }
   final void gc(InstanceStats is) {
-    instances--;
-    collected++;
+    live--;
+    dead++;
   }
   final void resetInstances() {
-    instances = 0;
+    live = 0;
   }
 
   public String toString() {
     return
       "(stats"+
-      " instances="+instances+
-      " collected="+collected+
+      " live="+live+
+      " dead="+dead+
       ")";
   }
 
   /** impl with additional size/capacity fields */
   private static class PlusSize extends ClassStats {
 
-    private long totalSize;
+    private long sumSize;
     private long maxSize;
-    private long maxSizeEver;
-    private long totalCapacity;
-    private long maxCapacity;
-    private long maxCapacityEver;
+    private long maxEverSize;
 
-    public long getTotalSize() { return totalSize; }
-    public long getMaximumSize() { return maxSize; }
-    public long getMaximumSizeEver() { return maxSizeEver; }
-    public long getTotalCapacity() { return totalCapacity; }
-    public long getMaximumCapacity() { return maxCapacity; }
-    public long getMaximumCapacityEver() { return maxCapacityEver; }
+    private long sumCapacityCount;
+    private long maxCapacityCount;
+    private long maxEverCapacityCount;
+
+    private long sumCapacityBytes;
+    private long maxCapacityBytes;
+    private long maxEverCapacityBytes;
+
+    public long getSumSize() {
+      return sumSize;
+    }
+    public long getMaximumSize() {
+      return maxSize;
+    }
+    public long getMaximumEverSize() {
+      return maxEverSize;
+    }
+
+    public long getSumCapacityCount() {
+      return sumCapacityCount;
+    }
+    public long getMaximumCapacityCount() {
+      return maxCapacityCount;
+    }
+    public long getMaximumEverCapacityCount() {
+      return maxEverCapacityCount;
+    }
+
+    public long getSumCapacityBytes() {
+      return sumCapacityBytes;
+    }
+    public long getMaximumCapacityBytes() {
+      return maxCapacityBytes;
+    }
+    public long getMaximumEverCapacityBytes() {
+      return maxEverCapacityBytes;
+    }
 
     void reset() {
-      totalSize = 0;
-      totalCapacity = 0;
-      maxCapacity = 0;
-      maxCapacity = 0;
+      sumSize = 0;
+      sumCapacityCount = 0;
+      sumCapacityBytes = 0;
+      maxSize = 0;
+      maxCapacityCount = 0;
+      maxCapacityBytes = 0;
     }
     void update(
         long size,
+        long capacityCount,
+        long capacityBytes,
         long maxSize,
-        long capacity,
-        long maxCapacity) {
-      totalSize += size;
-      totalCapacity += capacity;
+        long maxCapacityCount,
+        long maxCapacityBytes) {
+      sumSize += size;
       if (this.maxSize < maxSize) {
         this.maxSize = maxSize;
-        if (maxSizeEver < maxSize) {
-          maxSizeEver = maxSize;
+        if (maxEverSize < maxSize) {
+          maxEverSize = maxSize;
         }
       }
-      if (this.maxCapacity < maxCapacity) {
-        this.maxCapacity = maxCapacity;
-        if (maxCapacityEver < maxCapacity) {
-          maxCapacityEver = maxCapacity;
+      sumCapacityCount += capacityCount;
+      if (this.maxCapacityCount < maxCapacityCount) {
+        this.maxCapacityCount = maxCapacityCount;
+        if (maxEverCapacityCount < maxCapacityCount) {
+          maxEverCapacityCount = maxCapacityCount;
+        }
+      }
+      sumCapacityBytes += capacityBytes;
+      if (this.maxCapacityBytes < maxCapacityBytes) {
+        this.maxCapacityBytes = maxCapacityBytes;
+        if (maxEverCapacityBytes < maxCapacityBytes) {
+          maxEverCapacityBytes = maxCapacityBytes;
         }
       }
     }
@@ -149,12 +199,21 @@ public class ClassStats {
     public String toString() {
       return
         "("+super.toString()+
-        " totalSize="+totalSize+
-        " maxSize="+maxSize+
-        " maxSizeEver="+maxSizeEver+
-        " totalCapacity="+totalCapacity+
-        " maxCapacity="+maxCapacity+
-        " maxCapacityEver="+maxCapacityEver+
+        " size=("+
+        "sum="+sumSize+
+        " max="+maxSize+
+        " maxEver="+maxEverSize+
+        ")"+
+        " capacity_count=("+
+        "sum="+sumCapacityCount+
+        " max="+maxCapacityCount+
+        " maxEver="+maxEverCapacityCount+
+        ")"+
+        " capacity_bytes=("+
+        "sum="+sumCapacityBytes+
+        " max="+maxCapacityBytes+
+        " maxEver="+maxEverCapacityBytes+
+        ")"+
         ")";
     }
   }

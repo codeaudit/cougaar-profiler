@@ -20,16 +20,33 @@
  */
 package org.cougaar.profiler;
 
-public interface Size {
+/**
+ * Placeholder for RFE:
+ * <p>
+ * Profiled classes can track "java.lang.String" by calling
+ * the methods in this class after each string allocation.
+ */
+public final class Strings {
 
-  /**
-   * "size()" value.
-   * <p>
-   * This looks for a field named:<ul> 
-   *   <li>size  <i>(e.g. ArrayList)</i></li>
-   *   <li>elementCount  <i>(e.g. Vector)</i></li>
-   *   <li>count  <i>(e.g. ByteArrayOutputStream)</i></li>
-   * </ul> 
-   */
-  int $get_size();
+  // object header size in bytes
+  private static final int HEADER = 8;
+
+  // does InstanceStats support strings yet?
+  private static final boolean LENGTH = false;
+
+  private Strings() { }
+
+  public static final MemoryTracker STRINGS =
+    MemoryTracker.getInstance(
+        "String", HEADER, false, LENGTH);
+  public static final void newString(String s) {
+    STRINGS.add(s);
+  }
+
+  public static final MemoryTracker STRING_BUFFERS =
+    MemoryTracker.getInstance(
+        "StringBuffer", HEADER, false, LENGTH);
+  public static final void newStringBuffer(StringBuffer sb) {
+    STRING_BUFFERS.add(sb);
+  }
 }

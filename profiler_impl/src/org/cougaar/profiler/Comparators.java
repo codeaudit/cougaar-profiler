@@ -31,6 +31,9 @@ public class Comparators {
 
   private Comparators() { }
 
+  public static final boolean INCREASING = true;
+  public static final boolean DECREASING = false;
+
   /**
    * Sort a list of InstanceStats.
    *
@@ -50,20 +53,40 @@ public class Comparators {
   public static final String HASHCODE = "hashcode";
   public static final String SIZE = "size";
   public static final String MAX_SIZE = "max_size";
-  public static final String CAPACITY = "capacity";
-  public static final String MAX_CAPACITY = "max_capacity";
+  public static final String CAPACITY_COUNT = "capacity_count";
+  public static final String MAX_CAPACITY_COUNT = "max_capacity_count";
+  public static final String CAPACITY_BYTES = "capacity_bytes";
+  public static final String MAX_CAPACITY_BYTES = "max_capacity_bytes";
   public static final String EXCESS_CAPACITY = "excess_capacity";
   public static final String GROUP_COUNT = "group_count";
+
+  /** get comparator names */
+  public static final String[] getNames() {
+    return new String[] {
+      TIME,
+      COMPARE_TO,
+      HASHCODE,
+      SIZE,
+      MAX_SIZE,
+      CAPACITY_COUNT,
+      MAX_CAPACITY_COUNT,
+      EXCESS_CAPACITY,
+      // GROUP_COUNT,
+    };
+  }
+
+  /** get comparator by name */
   public static final Comparator getComparator(
       boolean increasing, String name) {
     Comparator ret;
+    // ugly switch:
     if (name == null) {
       ret = null;
-    } else if (name.equals(SIZE)) {
+    } else if (name.equals(TIME)) {
       if (increasing) {
-        ret = INCREASING_SIZE_COMPARATOR;
+        ret = INCREASING_TIME_COMPARATOR;
       } else {
-        ret = DECREASING_SIZE_COMPARATOR;
+        ret = DECREASING_TIME_COMPARATOR;
       }
     } else if (name.equals(COMPARE_TO)) {
       if (increasing) {
@@ -77,11 +100,11 @@ public class Comparators {
       } else {
         ret = DECREASING_HASHCODE_COMPARATOR;
       }
-    } else if (name.equals(CAPACITY)) {
+    } else if (name.equals(SIZE)) {
       if (increasing) {
-        ret = INCREASING_CAPACITY_COMPARATOR;
+        ret = INCREASING_SIZE_COMPARATOR;
       } else {
-        ret = DECREASING_CAPACITY_COMPARATOR;
+        ret = DECREASING_SIZE_COMPARATOR;
       }
     } else if (name.equals(MAX_SIZE)) {
       if (increasing) {
@@ -89,23 +112,35 @@ public class Comparators {
       } else {
         ret = DECREASING_MAX_SIZE_COMPARATOR;
       }
-    } else if (name.equals(MAX_CAPACITY)) {
+    } else if (name.equals(CAPACITY_COUNT)) {
       if (increasing) {
-        ret = INCREASING_MAX_CAPACITY_COMPARATOR;
+        ret = INCREASING_CAPACITY_COUNT_COMPARATOR;
       } else {
-        ret = DECREASING_MAX_CAPACITY_COMPARATOR;
+        ret = DECREASING_CAPACITY_COUNT_COMPARATOR;
+      }
+    } else if (name.equals(MAX_CAPACITY_COUNT)) {
+      if (increasing) {
+        ret = INCREASING_MAX_CAPACITY_COUNT_COMPARATOR;
+      } else {
+        ret = DECREASING_MAX_CAPACITY_COUNT_COMPARATOR;
+      }
+    } else if (name.equals(CAPACITY_BYTES)) {
+      if (increasing) {
+        ret = INCREASING_CAPACITY_BYTES_COMPARATOR;
+      } else {
+        ret = DECREASING_CAPACITY_BYTES_COMPARATOR;
+      }
+    } else if (name.equals(MAX_CAPACITY_BYTES)) {
+      if (increasing) {
+        ret = INCREASING_MAX_CAPACITY_BYTES_COMPARATOR;
+      } else {
+        ret = DECREASING_MAX_CAPACITY_BYTES_COMPARATOR;
       }
     } else if (name.equals(EXCESS_CAPACITY)) {
       if (increasing) {
         ret = INCREASING_EXCESS_CAPACITY_COMPARATOR;
       } else {
         ret = DECREASING_EXCESS_CAPACITY_COMPARATOR;
-      }
-    } else if (name.equals(TIME)) {
-      if (increasing) {
-        ret = INCREASING_TIME_COMPARATOR;
-      } else {
-        ret = DECREASING_TIME_COMPARATOR;
       }
     } else if (name.equals(GROUP_COUNT)) {
       if (increasing) {
@@ -253,32 +288,60 @@ public class Comparators {
     new ReverseComparator(DECREASING_MAX_SIZE_COMPARATOR);
 
   /** largest capacity first */
-  public static final Comparator DECREASING_CAPACITY_COMPARATOR = 
+  public static final Comparator DECREASING_CAPACITY_COUNT_COMPARATOR = 
     new Comparator() {
       public int compare(Object o1, Object o2) {
         InstanceStats is1 = (InstanceStats) o1;
         InstanceStats is2 = (InstanceStats) o2;
-        int i1 = is1.getCapacity();
-        int i2 = is2.getCapacity();
+        int i1 = is1.getCapacityCount();
+        int i2 = is2.getCapacityCount();
         return i2 - i1;
       }
     };
-  public static final Comparator INCREASING_CAPACITY_COMPARATOR =
-    new ReverseComparator(DECREASING_CAPACITY_COMPARATOR);
+  public static final Comparator INCREASING_CAPACITY_COUNT_COMPARATOR =
+    new ReverseComparator(DECREASING_CAPACITY_COUNT_COMPARATOR);
 
   /** largest max_capacity first */
-  public static final Comparator DECREASING_MAX_CAPACITY_COMPARATOR = 
+  public static final Comparator DECREASING_MAX_CAPACITY_COUNT_COMPARATOR = 
     new Comparator() {
       public int compare(Object o1, Object o2) {
         InstanceStats is1 = (InstanceStats) o1;
         InstanceStats is2 = (InstanceStats) o2;
-        int i1 = is1.getMaximumCapacity();
-        int i2 = is2.getMaximumCapacity();
+        int i1 = is1.getMaximumCapacityCount();
+        int i2 = is2.getMaximumCapacityCount();
         return i2 - i1;
       }
     };
-  public static final Comparator INCREASING_MAX_CAPACITY_COMPARATOR =
-    new ReverseComparator(DECREASING_MAX_CAPACITY_COMPARATOR);
+  public static final Comparator INCREASING_MAX_CAPACITY_COUNT_COMPARATOR =
+    new ReverseComparator(DECREASING_MAX_CAPACITY_COUNT_COMPARATOR);
+
+  /** largest capacity first */
+  public static final Comparator DECREASING_CAPACITY_BYTES_COMPARATOR = 
+    new Comparator() {
+      public int compare(Object o1, Object o2) {
+        InstanceStats is1 = (InstanceStats) o1;
+        InstanceStats is2 = (InstanceStats) o2;
+        int i1 = is1.getCapacityBytes();
+        int i2 = is2.getCapacityBytes();
+        return i2 - i1;
+      }
+    };
+  public static final Comparator INCREASING_CAPACITY_BYTES_COMPARATOR =
+    new ReverseComparator(DECREASING_CAPACITY_BYTES_COMPARATOR);
+
+  /** largest max_capacity first */
+  public static final Comparator DECREASING_MAX_CAPACITY_BYTES_COMPARATOR = 
+    new Comparator() {
+      public int compare(Object o1, Object o2) {
+        InstanceStats is1 = (InstanceStats) o1;
+        InstanceStats is2 = (InstanceStats) o2;
+        int i1 = is1.getMaximumCapacityBytes();
+        int i2 = is2.getMaximumCapacityBytes();
+        return i2 - i1;
+      }
+    };
+  public static final Comparator INCREASING_MAX_CAPACITY_BYTES_COMPARATOR =
+    new ReverseComparator(DECREASING_MAX_CAPACITY_BYTES_COMPARATOR);
 
   /** largest (capacity - size) first */
   public static final Comparator DECREASING_EXCESS_CAPACITY_COMPARATOR = 
@@ -286,10 +349,10 @@ public class Comparators {
       public int compare(Object o1, Object o2) {
         InstanceStats is1 = (InstanceStats) o1;
         InstanceStats is2 = (InstanceStats) o2;
-        int c1 = is1.getCapacity();
+        int c1 = is1.getCapacityCount();
         int s1 = is1.getSize();
         int i1 = c1 - s1;
-        int c2 = is2.getCapacity();
+        int c2 = is2.getCapacityCount();
         int s2 = is2.getSize();
         int i2 = c2 - s2;
         return i2 - i1;

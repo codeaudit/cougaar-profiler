@@ -30,6 +30,25 @@ package org.cougaar.profiler;
 interface Configure {
 
   /**
+   * Disable all instance details to minimize CPU and memory
+   * overhead.
+   * <p>
+   * This is equivalent to setting:<pre>
+   *   boolean CAPTURE_TIME = false;
+   *   boolean CAPTURE_STACK = false;
+   *   boolean CAPTURE_SIZE = false;
+   *   boolean CAPTURE_CONTEXT = false;
+   * </pre>
+   */
+  boolean MIN_OVERHEAD = false;
+
+  /**
+   * Capture overall size/capacity metrics on a per-class basis,
+   * even if CAPTURE_SIZE is false.
+   */
+  boolean SUMMARY_SIZE = true;
+
+  /**
    * Context data is disabled since we may want to profile
    * "java.util.WeakHashMap", which is required by the context
    * implementation.
@@ -60,7 +79,7 @@ interface Configure {
    * Costs 8 bytes per profiled instance.
    * Invokes "System.currentTimeMillis()".
    */ 
-  boolean CAPTURE_TIME = true;
+  boolean CAPTURE_TIME = (true && !MIN_OVERHEAD);
 
   /**
    * Capture per-instance allocation stacktrace.
@@ -71,15 +90,15 @@ interface Configure {
    * </pre>
    * Invokes "new Throwable()".
    */ 
-  boolean CAPTURE_STACK = true;
+  boolean CAPTURE_STACK = (true && !MIN_OVERHEAD);
 
   /**
    * Capture per-instance size and capacity metrics.
    * <p> 
-   * Costs 16 bytes per profiled instance.
+   * Costs 24 bytes per profiled instance.
    * Periodically invokes Size and Capacity methods.
    */ 
-  boolean CAPTURE_SIZE = true;
+  boolean CAPTURE_SIZE = (true && !MIN_OVERHEAD);
 
   /**
    * Capture per-instance allocation "agent" context.
@@ -87,7 +106,7 @@ interface Configure {
    * Costs about 80+ bytes, depending upon security context.
    * Invokes "AccessController.getContext()".
    */
-  boolean CAPTURE_CONTEXT = (CAN_CAPTURE_CONTEXT && true);
+  boolean CAPTURE_CONTEXT = (true && CAN_CAPTURE_CONTEXT && !MIN_OVERHEAD);
 
   /**
    * MemoryStatsImpl singleton resolution delay in milliseconds.
@@ -106,6 +125,6 @@ interface Configure {
    * instance is added.  This thread periodically cleans the
    * entire table in case it hasn't been accessed in a while.
    */
-  int UPDATE_STATS_FREQUENCY = 60 * 1000;
+  int UPDATE_STATS_FREQUENCY = 2 * 60 * 1000;
 
 }

@@ -51,24 +51,17 @@ abstract class InstancesTable {
   protected abstract void allocate(InstanceStats is);
   protected abstract void gc(InstanceStats is);
 
-  public int size() {
-    int n = objs_size;
-    if (n < 0) {
-      // FIXME some bug here, where "objs.size()" is off.
-      // Need to track this down! 
-      System.err.println("negative objs_size: "+n); 
-      n = 10;
-    }
-    return n;
+  public final int size() {
+    return objs_size;
   }
 
-  public void startIterator() {
+  public final void startIterator() {
     iter_i = -1;
     iter_max = (objs == null ? 0 : objs.length);
     iter_next = null;
     iter_prev = null;
   }
-  public InstanceStats next() {
+  public final InstanceStats next() {
     while (true) {
       if (iter_next == null) {
         iter_prev = null;
@@ -99,13 +92,13 @@ abstract class InstancesTable {
     }
   }
 
-  private static int hash(Object x, int length) {
+  private static final int hash(Object x, int length) {
     int h = System.identityHashCode(x);
     // assert (length % 2 == 0)
     return h & (length-1);
   }
 
-  private void resize() {
+  private final void resize() {
     // length must be power of two for fast "&" hashing,
     // otherwise we would use "%"
     InstanceStats[] oldTable = objs;
@@ -144,7 +137,7 @@ abstract class InstancesTable {
     objs_threshold = newCapacity * 7;
   }
 
-  public void put(Object new_o, InstanceStats new_is) {
+  public final void put(Object new_o, InstanceStats new_is) {
     if (objs == null) {
       resize();
     }
