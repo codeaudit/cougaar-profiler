@@ -380,9 +380,6 @@ get_classpath () {
     fi
   done
   SYSDEP=""
-  if [ -f $CIP/lib/javaiopatch.jar ]; then
-    SYSDEP=$CIP/lib/javaiopatch.jar
-  fi
   for x in $SEPSYS; do
     if [ -f $CIP/sys/$x.jar ]; then
       SYSDEP="$SYSDEP:$CIP/sys/$x.jar"
@@ -515,11 +512,6 @@ if [ $MODULE = profiler_config ] ||
   [ $MODULE = bcel ]; then
   echo "skipping $MODULE"
   exit 0
-fi
-
-if [ $MODULE = javaiopatch ]; then
-  # compatibility for Cougaar IO patch
-  $MODULE="java.io"
 fi
 
 # parse "java.${NAME}"

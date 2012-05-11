@@ -73,7 +73,6 @@ fi
 #    java \
 #      -Xbootclasspath/p:$CIP/lib/profiler_impl.jar \
 #      -Xbootclasspath/p:$CIP/lib/javautilpatch.jar \
-#      -Xbootclasspath/p:$CIP/lib/javaiopatch.jar \
 #      ...
 for x in $JDK_MODULES; do
   # replace this with a more selective filter, e.g.
