@@ -68,9 +68,6 @@ import org.apache.bcel.generic.Type;
  * in all of its own constructor/clone/readObject methods.
  * Any allocation of this class by any class in the VM will
  * be tracked.
- * <p>
- * For details see
- * <a href="http://profiler.cougaar.org">http://profiler.cougaar.org</a>.
  */
 public class SelfProfiler {
 
